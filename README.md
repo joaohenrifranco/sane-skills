@@ -10,12 +10,12 @@ with `gh skill install`.
 
 | Skill | Version | Purpose | Depends on |
 |---|---|---|---|
-| `sane-code` | 1.0.0 | Portable code standards (`rules/`) + independent category review orchestration | — |
-| `sane-plan` | 3.0.0 | Planning workflow: map, scope, compare options, record decisions | `sane-code` (rules) |
-| `sane-debug` | 2.1.0 | Root-cause investigation: evidence, minimal fix, regression | — |
-| `sane-qa` | 1.0.0 | Browser QA: health scores, evidence, fix → re-test loop | `sane-browse`, `sane-debug` |
-| `sane-browse` | 1.0.0 | Headless browser runtime (`browse/` daemon) + command reference | — |
-| `sane-benchmark` | 4.0.0 | Runtime performance measurement, baselines, regressions | `sane-browse`, `sane-debug` |
+| `sane-code` | 1.0.1 | Portable code standards (`rules/`) + independent category review orchestration | — |
+| `sane-plan` | 3.0.1 | Planning workflow: map, scope, compare options, record decisions | `sane-code` (rules) |
+| `sane-debug` | 2.1.1 | Root-cause investigation: evidence, minimal fix, regression | — |
+| `sane-qa` | 1.0.1 | Browser QA: health scores, evidence, fix → re-test loop | `sane-browse`, `sane-debug` |
+| `sane-browse` | 1.0.1 | Headless browser runtime (`browse/` daemon) + command reference | — |
+| `sane-benchmark` | 4.0.1 | Runtime performance measurement, baselines, regressions | `sane-browse`, `sane-debug` |
 
 Bundle-style install is recommended: `sane-qa`, `sane-benchmark`, and
 `sane-plan` reference sibling skills by name and resolve only when the related
@@ -86,7 +86,8 @@ The skills are the canonical home for generic engineering guidance:
   fails if `sane-code/rules/` uses project-specific vocabulary or if
   cross-skill references do not resolve.
 - Every `SKILL.md` carries `name`, `version`, and `description` frontmatter;
-  rule IDs are `[SANE-<CATEGORY>-<NN>]` and must be unique across the bundle.
+  rule IDs are `[SANE-<CATEGORY>-<NN>]` and workflow steps
+  `[SANE-<CATEGORY>-STEP-<NN>]`; both must be unique across the bundle.
 - Bump all skill versions together per release; tag the repo (e.g. `v1.1.0`)
   and document pins in consuming projects.
 

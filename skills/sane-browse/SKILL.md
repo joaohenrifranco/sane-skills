@@ -1,6 +1,6 @@
 ---
 name: sane-browse
-version: 1.0.0
+version: 1.0.1
 description: |
   Headless browser for testing — navigate, screenshot, interact, diff.
   Use when: "open in browser", "test the site", "take a screenshot",
@@ -193,13 +193,13 @@ Refs are invalidated on navigation — run `snapshot` again after `goto`.
 | `click <sel>` | Click element |
 | `cookie <name>=<value>` | Set cookie on current page domain |
 | `cookie-import <json>` | Import cookies from JSON file |
-| `cookie-import-browser [browser] [--domain d]` | Import cookies from Chrome, Arc, Brave, or Edge |
+| `cookie-import-browser [browser] [--domain d]` | Import cookies from Comet, Chrome, Arc, Brave, or Edge |
 | `dialog-accept [text]` | Auto-accept next alert/confirm/prompt |
 | `dialog-dismiss` | Auto-dismiss next dialog |
 | `fill <sel> <val>` | Fill input |
 | `header <name>:<value>` | Set custom request header |
 | `hover <sel>` | Hover element |
-| `press <key>` | Press key — Enter, Tab, Escape, ArrowUp/Down/Left/Right, etc. |
+| `press <key>` | Press key — Enter, Tab, Escape, ArrowUp/Down/Left/Right, Backspace, Delete, Home, End, PageUp, PageDown, or modifiers like Shift+Enter |
 | `scroll [sel]` | Scroll element into view, or scroll to page bottom |
 | `select <sel> <val>` | Select dropdown option |
 | `type <text>` | Type into focused element |
@@ -212,7 +212,7 @@ Refs are invalidated on navigation — run `snapshot` again after `goto`.
 | Command | Description |
 |---------|-------------|
 | `attrs <sel\|@ref>` | Element attributes as JSON |
-| `console [--clear\|--errors]` | Console messages |
+| `console [--clear\|--errors]` | Console messages (`--errors` filters to error/warning) |
 | `cookies` | All cookies as JSON |
 | `css <sel> <prop>` | Computed CSS value |
 | `dialog [--clear]` | Dialog messages |
@@ -235,6 +235,7 @@ Refs are invalidated on navigation — run `snapshot` again after `goto`.
 | Command | Description |
 |---------|-------------|
 | `snapshot [flags]` | Accessibility tree with @e refs. Flags: -i -c -d N -s sel -D -a -o path -C |
+| `chain` | Run commands from JSON stdin. Format: `[["cmd","arg1",...],...]` |
 
 ### Tabs
 | Command | Description |

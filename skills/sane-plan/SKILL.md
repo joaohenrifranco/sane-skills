@@ -1,6 +1,6 @@
 ---
 name: sane-plan
-version: 3.0.0
+version: 3.0.1
 description: |
   Planning workflow for features, refactors, architecture decisions, and
   implementation scope. Maps the code, defines the problem, compares options,

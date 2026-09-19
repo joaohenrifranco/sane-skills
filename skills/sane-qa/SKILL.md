@@ -1,6 +1,6 @@
 ---
 name: sane-qa
-version: 1.0.0
+version: 1.0.1
 description: |
   Root QA specialist. Systematic QA testing with browser. Invocable standalone
   or used after user-facing behavior changes. Three tiers:
@@ -26,7 +26,7 @@ confirmed issue to `sane-debug` for root-cause analysis and re-test the result.
 | Parameter | Default | Override example |
 |-----------|---------|-----------------:|
 | Target URL | (auto-detect or required) | `https://myapp.com`, `http://localhost:3000` |
-| Tier | Standard | `--quick`, `--exhaustive` |
+| Tier | Standard | `--exhaustive` |
 | Mode | diff-aware (branch) / full (URL) | `--regression .local/baseline.json`, `--quick` |
 | Output dir | `.local/screenshots/` (ephemeral) | `Output to .local/qa` |
 | Scope | Full app (or diff-scoped) | `Focus on the billing page` |
@@ -37,7 +37,7 @@ confirmed issue to `sane-debug` for root-cause analysis and re-test the result.
 - **Standard tier:** + medium severity (default)
 - **Exhaustive tier:** + low/cosmetic severity
 
-> Note: "Quick tier" and "Quick mode" share a name but are different things. The tier controls which issues to fix; the mode (below) controls how to test. `--quick` selects the Quick mode; pass both `--quick` and a tier override to mix.
+> Note: "Quick tier" and "Quick mode" share a name but are different things. The tier controls which issues to fix; the mode (below) controls how to test. `--quick` selects the Quick mode and pairs it with the Quick tier (fix critical + high only). `--exhaustive` selects the Exhaustive tier (fix every severity). Pass both to mix, e.g. `--quick --exhaustive` = quick smoke test that fixes everything found.
 
 **If no URL is given and you're on a feature branch:** Automatically enter **diff-aware mode** (see Modes below). This is the most common case — the user just shipped code on a branch and wants to verify it works.
 
@@ -93,8 +93,6 @@ Before falling back to git diff heuristics, check for richer test plan sources:
 3. **Use whichever source is richer.** Fall back to git diff analysis only if neither is available.
 
 ---
-
-## Phases 1-6: QA Baseline
 
 ## Modes
 
@@ -298,7 +296,7 @@ Compute each category score (0-100), then take the weighted average.
 ### Console (weight: 15%)
 - 0 errors → 100
 - 1-3 errors → 70
-- 4-10 errors → 40
+- 4-9 errors → 40
 - 10+ errors → 10
 
 ### Links (weight: 10%)
@@ -354,7 +352,7 @@ Minimum 0 per category.
 9. **Never delete output files.** Screenshots and reports accumulate — that's intentional.
 10. **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
 11. **Show screenshots to the user.** After every `$B screenshot`, `$B snapshot -a -o`, or `$B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
-12. **Never refuse to use the browser.** When the user invokes `/sane-qa` or `/sane-qa --report-only`, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
+12. **Never refuse to use the browser.** When the user invokes `/sane-qa`, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
 
 ---
 
@@ -437,9 +435,11 @@ $B snapshot -D
 
 Skip if: classification is not "verified", OR the fix is purely visual/CSS, OR no test framework was detected.
 
+QA drafts and validates the test; `sane-debug` commits it together with the fix.
+
 **1. Study existing test patterns:** Read 2-3 test files closest to the fix. Match naming, imports, assertion style, and setup/teardown exactly.
 
-**2. Trace the bug's codepath, then write a regression test:**
+**2. Trace the bug's codepath, then draft a regression test:**
 - Set up the exact precondition that triggered the bug
 - Perform the action that exposed it
 - Assert correct behavior (not "it renders" or "it doesn't throw")
@@ -462,7 +462,7 @@ Mock all external dependencies. Use auto-incrementing names: `{name}.regression-
 **3. Run only the new test file:** `{detected test command} {new-test-file}`
 
 **4. Evaluate:**
-- Passes → ask `sane-debug` to add the regression test with the fix.
+- Passes → hand the validated test to `sane-debug` to include with the fix.
 - Fails → return the failure evidence to `sane-debug`; do not patch unrelated code.
 - Taking >2 min → skip and defer.
 

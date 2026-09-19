@@ -1,6 +1,6 @@
 ---
 name: sane-debug
-version: 2.1.0
+version: 2.1.1
 description: |
   Systematic debugging guidance: gather evidence, trace the path, identify the
   root cause, make the smallest fix, and verify it. Use for bugs and errors.

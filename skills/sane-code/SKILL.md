@@ -1,6 +1,6 @@
 ---
 name: sane-code
-version: 1.0.0
+version: 1.0.1
 description: |
   Portable code standards and independent review orchestration. Use while
   planning, authoring, refactoring, debugging, testing, or reviewing code, and

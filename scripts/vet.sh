@@ -68,5 +68,29 @@ else
   fail "unresolved cross-skill references"
 fi
 
+# 6. No inline JS passed to $B eval (eval reads a file; expressions must use js)
+if grep -R -n -E '\$B eval "' skills/*/SKILL.md 2>/dev/null; then
+  fail "inline JS passed to \$B eval (use \$B js for expressions)"
+else
+  pass "no inline \$B eval misuse"
+fi
+
+# 7. README version table matches SKILL.md frontmatter
+VERSYNC=0
+for f in "${SKILLS[@]}"; do
+  name=$(basename "$(dirname "$f")")
+  ver=$(awk 'NR<=6 && /^version:/{print $2; exit}' "$f")
+  row=$(printf '| `%s` | %s |' "$name" "$ver")
+  if ! grep -Fq "$row" README.md; then
+    echo "  README.md missing version row: $row"
+    VERSYNC=1
+  fi
+done
+if [ "$VERSYNC" -eq 0 ]; then
+  pass "README version table matches frontmatter"
+else
+  fail "README version table out of sync"
+fi
+
 [ "$FAIL" -eq 0 ] || { printf 'vet FAILED with %d failure(s)\n' "$FAIL"; exit 1; }
 printf 'vet PASSED\n'

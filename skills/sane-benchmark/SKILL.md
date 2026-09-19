@@ -1,18 +1,10 @@
 ---
 name: sane-benchmark
-version: 4.0.0
+version: 4.0.1
 description: |
   Runtime performance measurement workflow for live sites. Use when: "slow",
   "performance", "benchmark", "laggy", "page speed", "bundle size", "why is X slow",
   "optimize".
-allowed-tools:
-  - Bash
-  - Read
-  - Write
-  - Edit
-  - Grep
-  - Glob
-  - AskUserQuestion
 ---
 
 # Runtime measurement (invoked as /sane-benchmark <url>)
@@ -27,7 +19,7 @@ package manager, or repository path.
 - `/sane-benchmark <url> --measure` — measure only, print scorecard
 - `/sane-benchmark <url> --baseline` — capture baseline for future comparisons
 - `/sane-benchmark --diff` — measure pages touched by this branch, compare to baseline
-- `/sane-benchmark <url> --focus <metric>` — diagnose a specific metric: `lcp`, `fcp`, `bundle`, `ttfb`, `renders`, `network`
+- `/sane-benchmark <url> --focus <metric>` — diagnose a specific metric: `fcp`, `bundle`, `ttfb`, `network`
 
 ## Phase 1: Measure [SANE-BENCHMARK-STEP-01]
 
@@ -35,11 +27,16 @@ package manager, or repository path.
 mkdir -p ".local/benchmark"
 $B goto <url>
 $B perf
-$B eval "JSON.stringify(performance.getEntriesByType('navigation')[0])"
-$B eval "JSON.stringify(performance.getEntriesByType('paint'))"
-$B eval "JSON.stringify(performance.getEntriesByType('resource').map(r => ({name: r.name.split('/').pop().split('?')[0], url: r.name, type: r.initiatorType, size: r.transferSize, duration: Math.round(r.duration), start: Math.round(r.startTime)})).sort((a,b) => b.duration - a.duration))"
-$B eval "(() => { const r = performance.getEntriesByType('resource'); const byType = r.reduce((a,e) => { const t = e.initiatorType; a[t] = (a[t]||{count:0,bytes:0}); a[t].count++; a[t].bytes += e.transferSize||0; return a; }, {}); return JSON.stringify({total_requests: r.length, total_bytes: r.reduce((s,e) => s+(e.transferSize||0),0), by_type: byType}); })()"
-$B eval "(() => { const lt = performance.getEntriesByType('longtask'); return JSON.stringify({count: lt.length, total_block_ms: Math.round(lt.reduce((s,e) => s+e.duration,0)), longest_ms: Math.round(Math.max(0,...lt.map(e => e.duration)))}); })()"
+$B js "JSON.stringify(performance.getEntriesByType('navigation')[0])"
+$B js "JSON.stringify(performance.getEntriesByType('paint'))"
+$B js "JSON.stringify(performance.getEntriesByType('resource').map(r => ({name: r.name.split('/').pop().split('?')[0], url: r.name, type: r.initiatorType, size: r.transferSize, duration: Math.round(r.duration), start: Math.round(r.startTime)})).sort((a,b) => b.duration - a.duration))"
+$B js "(() => { const r = performance.getEntriesByType('resource'); const byType = r.reduce((a,e) => { const t = e.initiatorType; a[t] = (a[t]||{count:0,bytes:0}); a[t].count++; a[t].bytes += e.transferSize||0; return a; }, {}); return JSON.stringify({total_requests: r.length, total_bytes: r.reduce((s,e) => s+(e.transferSize||0),0), by_type: byType}); })()"
+# longtask entries are only reported while a PerformanceObserver is active —
+# register one, generate activity, then read what was collected
+$B js "(() => { window.__lt = []; window.__ltObs = new PerformanceObserver(l => window.__lt.push(...l.getEntries())); window.__ltObs.observe({ type: 'longtask', buffered: true }); return 'longtask observer registered'; })()"
+$B scroll
+$B wait --networkidle
+$B js "JSON.stringify({ count: window.__lt.length, total_block_ms: Math.round(window.__lt.reduce((s,e) => s+e.duration,0)), longest_ms: Math.round(Math.max(0,...window.__lt.map(e => e.duration))) })"
 ```
 
 ### Scorecard
@@ -78,7 +75,7 @@ investigation. Do not infer a code fix from a single measurement.
 If a code change is needed, hand the measured bottleneck to `sane-debug` for
 root-cause analysis and a minimal fix. Re-measure one change at a time.
 
-## Phase 5: Verify
+## Phase 5: Verify [SANE-BENCHMARK-STEP-05]
 
 ```bash
 $B goto <url>
