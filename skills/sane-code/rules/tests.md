@@ -1,47 +1,43 @@
 # Test Rules
 
-Portable guidance for tests that protect observable behavior and recovery paths.
+Opinionated defaults for tests that prove observable contracts, failure handling, and recovery without coupling to implementation.
 
-### [SANE-TEST-01] Trace changed behavior end to end
+### [SANE-TEST-OBSERVABLE-BOUNDARIES] Prove changed behavior at an observable boundary
 
-Follow each changed entry point from input through transformations, effects, and output. Test behavior observable by users, callers, operators, or downstream systems, not only internal implementation paths.
+Every behavior change must have a test that enters through the narrowest public boundary capable of demonstrating the result and observes the output, owned state, or effect promised by that boundary. Do not stop at a helper test when wiring, translation, or effect execution could still break the behavior. Pure refactors need no new case when existing contract tests already exercise the changed path.
 
-### [SANE-TEST-02] Test contracts, not incidental implementation
+### [SANE-TEST-CONTRACT-ASSERTIONS] Assert contracts, not implementation choreography
 
-Prefer assertions about outputs, state transitions, emitted effects, and supported errors. A contract-preserving refactor should not require rewriting unrelated tests.
+Assert returned outcomes, committed state, published effects, and stable failure semantics. Do not assert private calls, call order, internal data shapes, or incidental algorithms unless that interaction is itself the contract. A contract-preserving refactor should leave most tests unchanged, even when collaborators or control flow change.
 
-### [SANE-TEST-03] Cover normal, boundary, and failure behavior
+### [SANE-TEST-BEHAVIOR-BOUNDARIES] Select cases from behavior boundaries
 
-Consider representative valid input; empty, missing, minimum, maximum, and malformed input; dependency failures and timeouts; repeated or concurrent invocation; cancellation; partial completion; and recovery after errors.
+For each changed contract, test a representative success, the nearest input or state boundary where behavior changes, and every expected failure with a distinct caller remedy. Add overlap, repetition, timeout, cancellation, or partial-completion cases only when the operation can encounter them. Do not create a ceremonial matrix of values that all exercise the same decision.
 
-### [SANE-TEST-04] Exercise every behaviorally meaningful branch
+### [SANE-TEST-DECISION-OUTCOMES] Exercise every meaningful decision outcome
 
-Cover guards, retries, authorization paths, fallbacks, error handlers, and state transitions that change behavior. If a branch is not tested, record why it is unreachable, covered elsewhere, generated, or accepted risk.
+Each guard, authorization decision, retry terminal state, fallback, and state transition that changes observable behavior requires direct evidence. Coverage percentages do not substitute for an assertion about the outcome. Leave a branch untested only when it is generated, unreachable by construction, or already proved at a more appropriate boundary, and make that reason explicit in review.
 
-### [SANE-TEST-05] Add regression coverage for defects
+### [SANE-TEST-REGRESSION-COVERAGE] Make every defect fix a regression test
 
-A fixed defect gets a test that fails for the old behavior and passes for the corrected behavior, at the smallest boundary that reproduces the real condition.
+A defect fix must include a test that fails against the faulty behavior and passes with the fix, reproducing the real trigger at the smallest observable boundary. Do not encode the patch's internal shape as the assertion. Omit the test only when execution is impossible in the repository; record the missing harness and manual evidence instead.
 
-### [SANE-TEST-06] Test recovery, cleanup, and cancellation
+### [SANE-TEST-INTERRUPTED-STATE] Prove the state left after interruption
 
-Verify visible output, persisted state, retries, cleanup, and whether work can safely continue after failure. An assertion that an exception was thrown is insufficient when recovery matters.
+When work can fail, retry, cancel, or complete partially, assert the final owned state, externally visible effects, released resources, and whether a later attempt can proceed safely. Merely asserting that an error was raised is insufficient. Test cleanup after both partial initialization and repeated cleanup when those paths are possible.
 
-### [SANE-TEST-07] Use the lowest reliable test level
+### [SANE-TEST-RISKY-BOUNDARY] Use the lowest level that includes the risky boundary
 
-Use unit tests for deterministic logic, integration tests for boundaries, and end-to-end tests for critical multi-component workflows. Do not replace meaningful integration coverage with mocks that merely reproduce implementation assumptions.
+Test deterministic policy directly, but test serialization, persistence, transport, framework integration, and vendor adapters against their real boundary or a faithful local implementation. Do not mock the component whose contract is under test or replace integration evidence with expectations that restate production calls. Reserve end-to-end tests for critical workflows that cannot be proved by narrower boundary tests because their cost and diagnosis time are higher.
 
-### [SANE-TEST-08] Control nondeterminism
+### [SANE-TEST-OWNED-NONDETERMINISM] Make nondeterminism test-owned
 
-Control time, randomness, concurrency, network behavior, and external services with clocks, synchronization, injected dependencies, fixtures, or bounded polling. Avoid arbitrary sleeps and order-dependent tests.
+Tests must control outcome-affecting time, randomness, scheduling, and dependency responses through a test-owned boundary, and concurrent tests must synchronize on observable conditions. Fixed sleeps, live external services, and dependence on suite order are prohibited defaults. A real-time timeout test may use the actual clock only when timing is the contract and the assertion has a bounded, platform-tolerant margin.
 
-### [SANE-TEST-09] Keep fixtures representative and minimal
+### [SANE-TEST-LOCAL-FIXTURES] Keep fixtures local, valid, and minimal
 
-Make important assumptions visible near the test. Avoid shared mutable fixtures and setup that hides the behavior under test.
+Construct only the state relevant to the behavior and keep decisive values visible in the test. Fixtures must satisfy real invariants but must not import production snapshots, share mutable state, or hide important defaults behind broad setup. Shared immutable builders are acceptable when each test overrides the values that drive its outcome.
 
-### [SANE-TEST-10] Treat tests as behavior documentation
+### [SANE-TEST-ASSERTIONS-AS-CONTRACT] Treat assertions as the executable behavior record
 
-Names and assertions describe supported behavior and constraints. Changing or weakening an assertion is a behavior change requiring review, not a way to accommodate an implementation.
-
-## Authoring checklist
-
-Map changed codepaths to existing tests, add missing branch and recovery evidence, check mock boundaries, and confirm tests are deterministic and independently runnable.
+Name tests as supported behavior under a stated condition, and make each failure identify the broken contract. Do not weaken, delete, or bulk-update assertions merely to make a new implementation pass; review such changes as changes to supported behavior. Implementation-focused tests may document a deliberate algorithmic constraint only when that constraint is itself required.

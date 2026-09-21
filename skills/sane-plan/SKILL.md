@@ -1,54 +1,117 @@
 ---
 name: sane-plan
-version: 3.0.1
+version: 4.0.0
 description: |
-  Planning workflow for features, refactors, architecture decisions, and
-  implementation scope. Maps the code, defines the problem, compares options,
-  records decisions, and routes evidence and validation.
+  Opinionated planning for features, refactors, and architecture decisions. Chooses
+  the smallest design that protects real ownership, dependency, consistency, and
+  evolution boundaries, with explicit tradeoffs and concise implementation scope.
 ---
 
-# /sane-plan — Planning Workflow
+# /sane-plan — Smallest Defensible Design
 
-Plans produce PR description sections, branch-scoped staging artifacts, or PR comments. Never implement application code in planning mode.
+Planning mode decides what should change and why; it does not implement application
+code. Follow repository guidance and load the applicable `sane-code` rules before
+making technical recommendations.
+
+## Operating position
+
+Prefer direct changes in the existing owner. Introduce a seam, service, contract,
+state machine, queue, cache, shared model, or migration only when it protects a
+concrete ownership, dependency, consistency, or independent-evolution boundary.
+Keep business policy independent of delivery and infrastructure, make state and
+side-effect ownership explicit, and keep strong consistency local to a named
+boundary.
+
+Reject speculative abstraction, symmetry for its own sake, broad cleanup disguised
+as prerequisite work, and distributed machinery for failures that can be handled
+locally. Also reject a superficially small patch when it hides ownership, couples
+independently changing contexts, or relies on exactly-once behavior. Visible wiring,
+translation, durable progress, reconciliation, or limited duplication are acceptable
+costs when they protect a real boundary; otherwise prefer less machinery.
 
 ## Steps
 
-### [SANE-PLAN-STEP-01] Map the code
-Read `AGENTS.md`, inspect recent history and the current diff, map relevant callers and consumers, and check prior work. For user-facing work, inspect analytics call sites and identify existing events that can measure the outcome. For refactors, trace construction, dependencies, state ownership, and boundaries end to end.
+### [SANE-PLAN-MAP-CODE] Map the code
 
-### [SANE-PLAN-STEP-02] Define the problem
-State what breaks or remains unsolved without the change. Challenge whether the requested framing is the simplest useful one and identify existing code that partially solves it. Handle premise, user value, scope, and opportunity cost directly in the plan when relevant. Load the applicable `sane-code` rules for technical structure and read the applicable nested `AGENTS.md`.
+Inspect only enough of the current path to locate behavior, state, side effects,
+callers, consumers, and the owner of each relevant decision. Start with repository
+instructions and nearby code and tests. Consult history, analytics, operational data,
+or distant consumers when they resolve a live uncertainty; do not collect them by
+ritual. For refactors, trace construction and dependencies across the boundary being
+changed, not the entire system.
 
-### [SANE-PLAN-STEP-03] Align vocabulary
-Name every new entity, state, role, or boundary; map it to existing schema and code terminology; and resolve inconsistent names within the change boundary. Use explicit verbs for entity transformations and record source and target entities.
+### [SANE-PLAN-DEFINE-PROBLEM] Define the problem
 
-### [SANE-PLAN-STEP-04] Compare alternatives
-Present at least two approaches for non-trivial work: a minimal approach and a structural/long-term approach. Include reuse, effort, risks, impact, and what each approach deliberately does not build.
+State the observable problem, the invariant or capability that is missing, and the
+consequence of doing nothing. Separate requested implementation from required
+outcome, identify code that already owns part of the behavior, and exclude unrelated
+improvements. If the request is already solved, belongs to another owner, or does not
+justify its cost, recommend no change or a narrower change.
 
-### [SANE-PLAN-STEP-05] Choose and document
-Record the problem, alternatives, chosen approach, impact, caveats, migration path, and success criteria. Success criteria should be measurable for product work and should include build, test, regression, and performance expectations where relevant for technical work.
+### [SANE-PLAN-ALIGN-VOCABULARY] Align vocabulary
 
-### [SANE-PLAN-STEP-06] Route evidence and validation
-Load the applicable `sane-code` rules for technical structure. Add tests,
-security, and performance rules according to the change surface. Request runtime,
-analytics, browser, or other operational evidence only when the host project
-provides an appropriate workflow. Recommend `sane-code` review after
-implementation.
+Name only concepts needed to make ownership, state, transformations, or contracts
+unambiguous. Reuse established domain language and state source and target when data
+crosses a boundary. Resolve ambiguity inside the change, but do not launch repository-
+wide renames or invent entities merely to make the plan look complete.
+
+### [SANE-PLAN-COMPARE-ALTERNATIVES] Compare alternatives
+
+Choose the smallest design that preserves the identified boundaries. Compare another
+approach only when there is a material decision: for example, direct code versus a
+new boundary, local consistency versus asynchronous coordination, or reuse versus
+translation. Describe the concrete benefit, cost, failure mode, and future constraint
+of viable options; dismiss dominated or speculative alternatives briefly rather than
+manufacturing a fixed option count.
+
+Prefer:
+
+- direct code over indirection without an independent reason to change;
+- one explicit owner over shared mutation;
+- local transactions over distributed consistency;
+- translated contracts over shared internal models across evolving contexts;
+- explicit idempotency, durable state, and reconciliation when work can repeat,
+  overlap, arrive late, or partially complete.
+
+Exceptions are bounded by the evidence: duplication may be cheaper than coupling,
+a tactical adapter may be safer than immediate migration, and an existing imperfect
+pattern may be retained when changing it would expand risk beyond the problem.
+
+### [SANE-PLAN-CHOOSE-DESIGN] Choose and document
+
+Record the chosen design, why it is the smallest defensible option, the owner of new
+state and side effects, affected contracts, implementation scope, migration or
+rollout needs, and deliberately deferred work. Make caveats and reversibility clear.
+Success criteria should describe observable behavior and relevant failure recovery;
+do not require metrics, performance targets, migrations, or compatibility machinery
+when the change does not create those concerns.
+
+### [SANE-PLAN-ROUTE-VALIDATION] Route evidence and validation
+
+Recommend the least evidence that can disprove the risky assumptions and demonstrate
+the intended behavior. Include focused tests and build or type checks when applicable;
+add security, performance, browser, analytics, migration, concurrency, or operational
+validation only when the change surface warrants it. Name evidence that is unavailable
+and the resulting risk instead of prescribing unsupported process. Recommend
+`sane-code` review after implementation when production code changes.
 
 ## Artifact behavior
 
-When a PR exists, discover its metadata with the repository's GitHub tooling and update only sections owned by `/sane-plan`. If no PR exists, return the plan in the response or stage it under `.local/`. Do not overwrite unrelated PR content.
+When a PR exists and the host provides suitable tooling, update only content clearly
+owned by `/sane-plan`; never overwrite unrelated PR text. Otherwise return the plan
+in the response or use an explicitly requested local staging location. Do not create
+committed planning artifacts by default.
 
-## Output
+## Output contract
 
-End with:
+Return a concise plan with:
 
-- Problem
-- Alternatives Considered
-- Chosen Approach
-- Impact
-- Caveats
-- Success Criteria
-- Recommended evidence and validation steps
+- **Problem and boundary** — observable need, scope, owner, and relevant invariant;
+- **Chosen design** — smallest defensible approach and implementation slices;
+- **Tradeoffs** — rejected material alternatives, accepted costs, and bounded exceptions;
+- **Impact** — contracts, state, migration, rollout, or compatibility effects that actually apply;
+- **Validation** — focused evidence, success criteria, and remaining uncertainty.
 
-A plan is ready for implementation only after the chosen approach and unresolved vocabulary are clear.
+A plan is ready when ownership and vocabulary are clear enough to implement and no
+unresolved decision can materially change the design. Minor implementation details
+may remain with the implementer.

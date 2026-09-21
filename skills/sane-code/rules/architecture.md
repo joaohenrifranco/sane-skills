@@ -1,53 +1,67 @@
 # Architecture Rules
 
-Portable guidance for clear boundaries, explicit ownership, and replaceable infrastructure.
+Opinionated defaults for domain-centered systems with inward dependencies, explicit ownership, local consistency, and translated integration boundaries.
 
-### [SANE-ARCH-01] Keep responsibilities coherent
+### [SANE-ARCH-RESPONSIBILITY-OWNERSHIP] Organize code around responsibility and ownership
 
-A module should have one primary reason to change. Separate policy, coordination, persistence, presentation, and infrastructure when they evolve independently. Treat multiple responsibilities, excessive configuration surfaces, and deep prop drilling as refactoring signals, not universal numeric violations.
+Keep domain policy, application orchestration, presentation, persistence, and infrastructure under distinct owners because they change for different reasons. Prefer direct code within one owner; introduce a boundary only when responsibility, lifecycle, or independent evolution actually differs. Do not create layers solely to mirror a generic architecture diagram.
 
-### [SANE-ARCH-02] Keep dependencies directed and acyclic
+### [SANE-ARCH-INWARD-DEPENDENCIES] Point dependencies toward domain policy
 
-Dependencies should flow toward lower-level mechanisms through deliberate boundaries. Lower-level modules must not reach upward into orchestration or presentation. Circular dependencies are architecture defects.
+Source-code dependencies should point from presentation and infrastructure toward application and domain policy. Domain code must not depend on orchestration, transport, persistence, frameworks, or process state. Infrastructure implements ports owned by its consumers; do not reshape domain policy around an infrastructure API merely to avoid an adapter.
 
-### [SANE-ARCH-03] Construct collaborators at the composition root
+### [SANE-ARCH-COMPOSITION-ROOTS] Assemble applications at composition roots
 
-The runtime owner constructs services, clients, repositories, and other collaborators, then injects them into consumers. Avoid service locators, hidden process state, and fallback instances created inside business logic.
+Construct each application's object graph at an explicit composition root and inject concrete adapters into consumers. Business code must not discover collaborators through service locators, global registries, hidden process state, or locally constructed fallbacks. Accept visible wiring as the cost of making runtime choices and lifecycles explicit.
 
-### [SANE-ARCH-04] Keep domain logic independent of infrastructure
+### [SANE-ARCH-BOUNDARY-TRANSLATION] Translate representations at boundaries
 
-Translate external representations at boundaries. Business rules should not directly depend on databases, HTTP clients, filesystems, UI frameworks, environment variables, or process globals.
+Convert transport payloads, database records, framework objects, and vendor models into domain concepts when they enter the domain, and translate results on exit. Do not let external representations become the domain model. The mapping code is intentional duplication that protects business policy from externally driven change.
 
-### [SANE-ARCH-05] Make state ownership and transitions explicit
+### [SANE-ARCH-SINGLE-STATE-OWNER] Give mutable state one owner
 
-Every mutable value has one clear owner and update path. Avoid duplicated state and flags whose meaning changes across layers. Represent meaningful lifecycle states explicitly.
+Every mutable value and state transition must have one authoritative owner and update path. Other components may hold derived views or caches, but they must not become competing sources of truth. When several components need to coordinate a transition, route the decision through the owner rather than synchronizing duplicated flags.
 
-### [SANE-ARCH-06] Prefer narrow, replaceable seams
+### [SANE-ARCH-CONSUMER-OWNED-PORTS] Introduce ports at real boundaries
 
-Expose the smallest contract a consumer needs. Keep abstractions near their consumers unless genuinely shared. Use explicit inputs, injected collaborators, and deterministic transformations so core behavior is testable without infrastructure.
+Define a narrow port from the consumer's needs when a dependency is external, independently replaceable, or would otherwise reverse dependency direction. Keep direct calls within one ownership boundary; do not add interfaces for every class or speculative implementation. Ports buy isolation and replaceability at the cost of mapping and wiring, so each port must protect a concrete boundary.
 
-### [SANE-ARCH-07] Name transformations precisely
+### [SANE-ARCH-DOMAIN-LANGUAGE] Name behavior in domain language
 
-Names should identify source and result entities. Prefer precise domain verbs over vague `process`, `handle`, or `manage`; make conversions between external, domain, and presentation data visible.
+Name operations for the domain decision or transformation they perform, including source and result concepts when conversion occurs. Avoid vague coordinative names such as `process`, `handle`, or `manage` when a precise domain verb exists. Technical names are appropriate in adapters; they must not displace domain language in policy code.
 
-### [SANE-ARCH-08] Put fallbacks at the owning boundary
+### [SANE-ARCH-FALLBACK-OWNERSHIP] Define fallback policy where absence gains meaning
 
-The component that establishes a value defines its fallback policy or exposes absence. Do not scatter defaults that conceal an unclear contract; intentional behavior-changing fallbacks need tests.
+The boundary that interprets an absent or unavailable value owns the fallback decision. Lower layers should preserve absence or failure unless their contract gives it domain meaning. Do not scatter convenient defaults across layers; accepting a fallback means accepting its behavior as part of the owning boundary's contract.
 
-### [SANE-ARCH-09] Keep side effects deliberate and recoverable
+### [SANE-ARCH-EFFECT-ISOLATION] Isolate effects from decisions
 
-Locate network calls, persistence, subscriptions, timers, and process mutations at explicit boundaries. Provide cleanup, rollback, retry semantics, or idempotency as appropriate; keep decision logic separate from effect execution.
+Keep domain decisions deterministic and execute network calls, persistence, subscriptions, timers, and process mutation through explicit application or infrastructure boundaries. Give every effect and lifecycle one owner. Do not hide effects in constructors, accessors, domain value objects, or implicit module initialization.
 
-### [SANE-ARCH-10] Keep module loading intentional
+### [SANE-ARCH-STATIC-MODULE-GRAPH] Keep the module graph static by default
 
-Prefer a static, side-effect-free module graph. Use dynamic loading only for a measured benefit such as a critical-path or bundle improvement, and preserve explicit ownership.
+Use static, side-effect-free imports so dependencies and initialization order remain inspectable. Dynamic loading is reserved for an explicit runtime boundary such as plugins or for a measured loading benefit; its policy, failure behavior, and lifecycle need an owner. Do not use dynamic loading to conceal cycles or defer ordinary construction.
 
-### [SANE-ARCH-11] Avoid boolean mode parameters for divergent behavior
+### [SANE-ARCH-EXPLICIT-POLICIES] Model divergent policies explicitly
 
-When modes have substantially different policies or lifecycles, use focused functions or an explicit strategy/domain type rather than a boolean that hides divergent paths.
+Use separate operations, strategies, or domain types when modes have different rules or lifecycles. A boolean or string option is acceptable for a small local variation, but must not select substantially different workflows behind one nominal operation. Accept an additional type or entry point when it makes policy differences visible to callers.
 
-Internal re-exports and barrels should not obscure ownership or create cycles; deliberate public package entrypoints are valid when they define a real API boundary.
+### [SANE-ARCH-MODULE-APIS] Expose deliberate module APIs
 
-## Authoring checklist
+Create a public entry point only for a module or package that owns a real API boundary. Within that boundary, prefer imports that preserve the origin and dependency direction of code. Do not use barrels or re-exports to manufacture a uniform surface, obscure ownership, or hide cycles.
 
-Trace entry points, callers, consumers, state owners, side effects, and boundaries before changing structure. Check cycles and hidden construction, then verify important policy can be tested without real infrastructure.
+### [SANE-ARCH-BOUNDED-CONTEXTS] Preserve bounded contexts and their language
+
+Organize domain behavior around cohesive business capabilities, each with language and rules that are internally consistent. When the same term has different meanings, lifecycles, or invariants, model it separately in each context rather than forcing a universal enterprise model. Accept duplicated data and translation as the cost of independent evolution.
+
+### [SANE-ARCH-LOCAL-CONSISTENCY] Keep strong consistency inside explicit boundaries
+
+Group only state that must change atomically to preserve a business invariant, and give one aggregate or domain owner authority over that boundary. Do not build large aggregates for navigational convenience or require synchronous consistency across independent owners. Across boundaries, expose progress and coordinate with durable state, events, compensation, or reconciliation.
+
+### [SANE-ARCH-DOMAIN-POLICY] Put business decisions in the domain
+
+Application code coordinates use cases, transactions, domain behavior, and external ports; domain code makes business decisions and enforces business invariants. Do not place policy in controllers, handlers, jobs, repositories, or UI components, and do not make domain objects perform transport or persistence workflows. Simple data operations may remain simple; introduce domain objects when behavior or invariants justify them.
+
+### [SANE-ARCH-CONTEXT-CONTRACTS] Translate between contexts through contracts
+
+Integrate independently evolving contexts with purpose-specific commands, events, or data contracts and translate them at the consuming boundary. Do not expose persistence models or reuse one context's domain model as another's internal model. Version contracts deliberately and accept mapping work to prevent semantic and release coupling.

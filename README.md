@@ -1,6 +1,6 @@
 # sane-skills
 
-Portable agent skills for planning, code review, debugging, QA, and performance
+Opinionated agent skills for planning, code review, debugging, QA, and performance
 measurement. A bundle of six workflow skills that were previously maintained
 inside a private monorepo and are now distributed stand-alone through the
 [Agent Skills](https://github.com/github/agent-skills) ecosystem, installable
@@ -10,12 +10,12 @@ with `gh skill install`.
 
 | Skill | Version | Purpose | Depends on |
 |---|---|---|---|
-| `sane-code` | 1.0.1 | Portable code standards (`rules/`) + independent category review orchestration | — |
-| `sane-plan` | 3.0.1 | Planning workflow: map, scope, compare options, record decisions | `sane-code` (rules) |
-| `sane-debug` | 2.1.1 | Root-cause investigation: evidence, minimal fix, regression | — |
-| `sane-qa` | 1.0.1 | Browser QA: health scores, evidence, fix → re-test loop | `sane-browse`, `sane-debug` |
-| `sane-browse` | 1.0.1 | Headless browser runtime (`browse/` daemon) + command reference | — |
-| `sane-benchmark` | 4.0.1 | Runtime performance measurement, baselines, regressions | `sane-browse`, `sane-debug` |
+| `sane-code` | 2.0.0 | Domain-centered code rules + independent category review orchestration | — |
+| `sane-plan` | 4.0.0 | Smallest-defensible-design planning with explicit boundaries and tradeoffs | `sane-code` (rules) |
+| `sane-debug` | 3.0.0 | Evidence-led root-cause investigation, minimal fix, and verification | — |
+| `sane-qa` | 2.0.0 | Risk-scoped browser QA with reproducible evidence and safe fix handoff | `sane-browse`, `sane-debug` |
+| `sane-browse` | 2.0.0 | Focused browser interaction and observable evidence collection | — |
+| `sane-benchmark` | 5.0.0 | Context-preserving runtime measurement, diagnosis, and comparison | `sane-browse`, `sane-debug` |
 
 Bundle-style install is recommended: `sane-qa`, `sane-benchmark`, and
 `sane-plan` reference sibling skills by name and resolve only when the related
@@ -85,9 +85,11 @@ The skills are the canonical home for generic engineering guidance:
 - Keep every skill self-contained and project-agnostic — `scripts/vet.sh`
   fails if `sane-code/rules/` uses project-specific vocabulary or if
   cross-skill references do not resolve.
-- Every `SKILL.md` carries `name`, `version`, and `description` frontmatter;
-  rule IDs are `[SANE-<CATEGORY>-<NN>]` and workflow steps
-  `[SANE-<CATEGORY>-STEP-<NN>]`; both must be unique across the bundle.
+- Every `SKILL.md` carries `name`, `version`, and `description` frontmatter.
+  Rules and workflow steps use unique semantic IDs such as
+  `[SANE-ARCH-INWARD-DEPENDENCIES]` and `[SANE-PLAN-DEFINE-PROBLEM]`. IDs name
+  enduring policies, remain stable across editorial changes, and give users a
+  precise policy to accept, challenge, or override in project guidance.
 - Bump all skill versions together per release; tag the repo (e.g. `v1.1.0`)
   and document pins in consuming projects.
 

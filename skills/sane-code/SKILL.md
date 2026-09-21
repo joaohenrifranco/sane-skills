@@ -1,6 +1,6 @@
 ---
 name: sane-code
-version: 1.0.1
+version: 2.0.0
 description: |
   Portable code standards and independent review orchestration. Use while
   planning, authoring, refactoring, debugging, testing, or reviewing code, and
@@ -14,6 +14,25 @@ The canonical generic policies are the five files in `rules/`. Read the applicab
 rule files before planning or changing code. Project-specific constraints come
 from the repository root and the most specific nested `AGENTS.md`; project rules
 explicitly take precedence over generic defaults.
+
+## Design position
+
+Prefer direct code until a real ownership, dependency, consistency, or evolution
+boundary justifies abstraction. Keep business policy independent of delivery and
+infrastructure, give every state transition and side effect a clear owner, and keep
+strong consistency local to an explicit boundary. Integrate independently evolving
+contexts through translated contracts rather than shared internal models.
+
+Assume external work can fail, repeat, overlap, arrive late, or complete partially.
+Use explicit state, idempotency, durable progress, and reconciliation instead of
+hidden control flow or exactly-once assumptions. These defaults intentionally accept
+visible wiring, mapping, and some data duplication to gain independent evolution and
+reliable behavior; do not pay those costs where no protected boundary exists.
+
+Semantic rule IDs are the shared vocabulary for findings and design disagreements.
+Cite the ID behind each recommendation so the user can accept it, challenge its
+applicability, or override it explicitly in project guidance. Keep an ID stable while
+its policy remains the same; wording and headings may evolve without changing it.
 
 ## Authoring mode
 

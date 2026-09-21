@@ -1,51 +1,47 @@
 # Performance Rules
 
-Portable static guidance for responsive systems. Measure runtime bottlenecks before optimizing.
+Opinionated defaults for measured latency, bounded resource use, and fair behavior under representative load.
 
-### [SANE-PERF-01] Measure before optimizing
+### [SANE-PERF-MEASURE-FIRST] Require evidence before optimization
 
-Establish a representative baseline using latency, throughput, memory, CPU, startup, render timing, transfer size, or battery metrics. Code shape alone is not evidence of a bottleneck.
+Establish a representative workload and baseline for the affected user or system outcome before adding performance complexity. Profiles and measurements outrank intuition; code shape alone does not prove a bottleneck. Fix demonstrably unbounded work or an obvious multiplicative remote call without production profiling, but still add a reproducible measurement when claiming improvement.
 
-### [SANE-PERF-02] Optimize the critical path first
+### [SANE-PERF-USEFUL-OUTCOME] Optimize the path to the useful outcome
 
-Prioritize work that delays useful results, blocks interaction, increases tail latency, or consumes disproportionate resources. Defer non-critical work and remove blocking dependencies.
+Define the useful outcome and improve the work that determines its latency, throughput, or resource budget. Remove or defer nonessential work from that path before micro-optimizing code outside it. Do not trade correctness or move work elsewhere merely to improve an isolated local metric.
 
-### [SANE-PERF-03] Bound work as input grows
+### [SANE-PERF-BOUNDED-WORK] Put a finite bound on input-dependent work
 
-Queries, loops, recursion, allocations, batches, and lists need reasonable growth behavior. Use pagination, streaming, batching, indexing, early termination, bounded buffers, and virtualization where appropriate.
+Any request, render, job, or message driven by variable input must have a finite bound on records examined, bytes retained, recursion depth, queued work, and output produced. Apply the bound at the producer rather than materializing an unbounded input and trimming afterward. A trusted offline job may exceed interactive limits, but it still needs an explicit resource budget and resumable progress when the dataset can grow.
 
-### [SANE-PERF-04] Avoid accidental multiplicative work
+### [SANE-PERF-SET-ORIENTED-WORK] Eliminate multiplicative remote and per-item work
 
-Check nested queries, per-item network calls, repeated parsing/rendering, duplicate subscriptions, and unexpected algorithmic growth. Prefer bulk operations and suitable complexity.
+Do not issue a query, network call, parse, render, or full scan once per item when one set-oriented operation can serve the collection. Make operation count visible and keep it constant or intentionally bounded as collection size grows. A direct per-item approach is acceptable only for a small enforced maximum where batching would add more cost than it removes.
 
-### [SANE-PERF-05] Avoid repeated expensive work
+### [SANE-PERF-CACHE-AFTER-DEDUPLICATION] Remove duplication before adding a cache
 
-Do not recompute, refetch, reparse, rerender, or reallocate unchanged results without reason. Caches and memoization must account for invalidation, permissions, locale, configuration, memory, and correctness.
+Within one operation, compute or fetch an unchanged value once and reuse it. Add a cross-operation cache only after measurement shows repeated work matters and one owner defines keys, invalidation, permission scope, and a memory bound. Do not use memoization to conceal an inefficient dependency path; a stale or unbounded cache is a correctness and capacity defect, not an optimization.
 
-### [SANE-PERF-06] Parallelize only independent work
+### [SANE-PERF-BOUNDED-CONCURRENCY] Bound concurrency around the constrained resource
 
-Start independent I/O or computation together when resource limits, ordering, cancellation, and failure semantics allow it. Overwhelming a dependency is not an optimization.
+Run independent work concurrently only up to an explicit limit chosen for the constrained dependency, CPU, memory, or connection pool. Unbounded fan-out and one-task-per-item defaults are prohibited because they convert load into queueing and failure. Preserve ordering only when the contract requires it; otherwise avoid serializing independent work without evidence.
 
-### [SANE-PERF-07] Control data volume at the source
+### [SANE-PERF-SOURCE-REDUCTION] Reduce data at its source
 
-Select, filter, aggregate, compress, paginate, or stream only the fields, rows, records, and bytes the consumer needs.
+Fetch, decode, and transfer only the fields and records the consumer will use, with filtering and limits applied by the data owner. Do not retrieve a full object graph or dataset and discard most of it locally. Accept over-fetching only for a small stable representation when projection would add measurable overhead or violate the source contract.
 
-### [SANE-PERF-08] Keep expensive work off latency-sensitive paths
+### [SANE-PERF-LATENCY-BUDGETS] Keep latency-sensitive paths within a work budget
 
-Move heavy parsing, computation, serialization, media processing, and rendering away from startup, request handlers, event handlers, and interactive rendering when warranted by workload evidence.
+Synchronous startup, request, event, and render paths may perform only work with a known bounded cost appropriate to their latency budget. Move heavy work behind an explicit asynchronous outcome when the contract permits delayed completion; do not merely hide it in an unobserved task. Small deterministic work should remain direct rather than paying coordination overhead for speculative offloading.
 
-### [SANE-PERF-09] Manage memory and resource lifetimes
+### [SANE-PERF-RESOURCE-CAPACITY] Give every retained resource a capacity and owner
 
-Release listeners, timers, buffers, streams, connections, workers, and cached data when their owners no longer need them. Watch for unbounded caches, retained closures, and duplicate subscriptions.
+The component that creates a connection, listener, timer, worker, buffer, queue, or cache owns its release and must define a finite capacity for retained resources. Do not rely on process lifetime, garbage collection timing, or traffic eventually subsiding. Pools and queues must apply backpressure or rejection at capacity rather than grow until the process or dependency fails.
 
-### [SANE-PERF-10] Preserve responsiveness and fairness
+### [SANE-PERF-TAIL-FAIRNESS] Optimize tail behavior and fairness
 
-Long work should yield, stream progress, or use an appropriate worker/background boundary. Include tail behavior and avoid starving other users, tasks, or event-loop work.
+Measure high-percentile behavior under concurrent load, not only averages in isolation. No request, tenant, batch, or CPU task may monopolize a shared worker, event loop, connection pool, or queue; divide or schedule long work so bounded progress remains available to others. A throughput gain that causes starvation or unacceptable tail latency is a regression.
 
-### [SANE-PERF-11] Re-measure and verify tradeoffs
+### [SANE-PERF-PROVEN-OPTIMIZATIONS] Keep only optimizations that prove their tradeoff
 
-Compare the result with the same baseline and workload. Confirm meaningful improvement without regressions in correctness, memory, reliability, security, or maintainability. Prefer the smallest optimization addressing the measured bottleneck.
-
-## Review checklist
-
-Identify the measured critical path, input-size and concurrency behavior, repeated or multiplicative work, resource lifetimes, and before/after evidence. Do not flag a static pattern as a defect without plausible impact or measurement where practical.
+Re-run the same representative workload after the change and compare the original user-facing metric plus memory and resource consumption. Retain the smallest change that delivers a material improvement without degrading correctness, reliability, security, or maintainability. Remove speculative complexity when the gain is within noise, and add a stable regression benchmark when the optimized budget is important enough to defend.

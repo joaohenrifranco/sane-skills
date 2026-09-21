@@ -30,12 +30,19 @@ for f in "${SKILLS[@]}"; do
   fi
 done
 
-# 2. SANE- rule IDs are unique across the bundle (rules + workflow steps)
+# 2. SANE rule IDs are unique semantic identifiers across rules and workflows
 DUPES=$(grep -ohE '\[SANE-[A-Z0-9-]+\]' skills/*/SKILL.md skills/sane-code/rules/*.md 2>/dev/null | sort | uniq -d || true)
 if [ -n "$DUPES" ]; then
   fail "duplicate SANE rule IDs: ${DUPES//$'\n'/ }"
 else
   pass "SANE rule IDs unique"
+fi
+
+INVALID_IDS=$(grep -ohE '\[SANE-[^]]+\]' skills/*/SKILL.md skills/sane-code/rules/*.md 2>/dev/null | grep -Ev '^\[SANE-[A-Z]+-[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*\]$' | sort -u || true)
+if [ -n "$INVALID_IDS" ]; then
+  fail "non-semantic or malformed SANE rule IDs: ${INVALID_IDS//$'\n'/ }"
+else
+  pass "SANE rule IDs use semantic names"
 fi
 
 # 3. Generic rules stay project-agnostic (no host-project vocabulary)
@@ -45,11 +52,11 @@ else
   pass "generic rules are project-agnostic"
 fi
 
-# 4. No legacy rule index or legacy rule IDs
-if grep -R -n -E '^## Rule Index|\[(CODE|DESIGN|AUTH|SEC|DB|PLATFORM|PERF|TESTS|STRATEGY)-[0-9]+\]' skills 2>/dev/null; then
+# 4. No legacy rule index or numeric rule IDs
+if grep -R -n -E '^## Rule Index|\[(CODE|DESIGN|AUTH|SEC|DB|PLATFORM|PERF|TESTS|STRATEGY)-[0-9]+\]|\[SANE-[A-Z]+-(STEP-)?[0-9]+\]' skills 2>/dev/null; then
   fail "legacy rule index or legacy rule IDs remain"
 else
-  pass "no legacy rule index or legacy IDs"
+  pass "no legacy rule index or numeric IDs"
 fi
 
 # 5. Cross-skill references (backticked sane-* names) resolve inside the bundle
