@@ -92,8 +92,3 @@ The skills are the canonical home for generic engineering guidance:
   precise policy to accept, challenge, or override in project guidance.
 - Bump all skill versions together per release; tag the repo (e.g. `v1.1.0`)
   and document pins in consuming projects.
-
-## Attribution
-
-Extracted from the `.agents/skills/sane-*` directory of the momo monorepo
-(107 commits of iteration) and made portable.
