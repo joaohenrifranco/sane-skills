@@ -10,6 +10,8 @@ Every behavior change must have a test that enters through the narrowest public 
 
 Assert returned outcomes, committed state, published effects, and stable failure semantics. Do not assert private calls, call order, internal data shapes, or incidental algorithms unless that interaction is itself the contract. A contract-preserving refactor should leave most tests unchanged, even when collaborators or control flow change.
 
+Prefer positive assertions that prove the user-observable behavior. Assert absence only when the absence itself is a meaningful user-facing guarantee, not merely to confirm that a particular DOM node, marker, or other implementation detail was removed. Ask: would this test still make sense if the component were redesigned without that element?
+
 ### [SANE-TEST-BEHAVIOR-BOUNDARIES] Select cases from behavior boundaries
 
 For each changed contract, test a representative success, the nearest input or state boundary where behavior changes, and every expected failure with a distinct caller remedy. Add overlap, repetition, timeout, cancellation, or partial-completion cases only when the operation can encounter them. Do not create a ceremonial matrix of values that all exercise the same decision.
