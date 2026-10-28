@@ -1,6 +1,6 @@
 ---
 name: sane-qa
-version: 2.0.0
+version: 6.0.0
 description: |
   Evidence-led browser QA for observable user contracts and changed risk. Use for
   branch/diff-aware verification, exploration of an explicit URL or flow, bug
@@ -20,7 +20,7 @@ user handoff. Confirm that its `$B` runtime or an equivalent is available. If it
 not, ask for the host project's browser setup; do not guess installation commands,
 frameworks, package managers, ports, credentials, or routes.
 
-## Scope and depth
+## [SANE-QA-DEPTH] Scope and depth
 
 Choose the smallest depth that can produce useful evidence. Tiers control coverage,
 never which findings get fixed:
@@ -40,7 +40,7 @@ counts, issue counts, or completion times.
 
 ## Exploration modes
 
-### Branch/diff-aware
+### [SANE-QA-DIFF-MODE] Branch/diff-aware
 
 Use when validating repository changes, including when no URL was supplied.
 
@@ -60,7 +60,7 @@ Use when validating repository changes, including when no URL was supplied.
 
 A supplied URL may be used as the environment while scope remains diff-aware.
 
-### Explicit URL or flow
+### [SANE-QA-URL-MODE] Explicit URL or flow
 
 Use when the user supplies a URL or names a flow without requesting branch analysis.
 Treat the URL, requested outcomes, available product documentation, and behavior
@@ -75,7 +75,7 @@ behavioral differences; do not convert them into synthetic health scores.
 
 ## Workflow
 
-### 1. Define contracts and risks
+### [SANE-QA-CONTRACTS] Define contracts and risks
 
 For each behavior in scope, record:
 
@@ -90,7 +90,7 @@ entitlement changes, state transitions, external integrations, recovery paths, a
 high-use workflows when they are relevant. Do not manufacture checks merely to fill a
 category.
 
-### 2. Establish safe state
+### [SANE-QA-SAFE-STATE] Establish safe state
 
 Do not require a clean tree, commit, stash, revert, or otherwise mutate repository
 history. Note the tested revision and relevant uncommitted changes so the evidence can
@@ -109,7 +109,7 @@ sandbox/test modes, reversible substitutes, or stop before final confirmation. I
 safety or reversibility is uncertain, ask before triggering the action. Never perform
 destructive cleanup just to restore state.
 
-### 3. Execute and observe
+### [SANE-QA-EXECUTE] Execute and observe
 
 For each selected contract:
 
@@ -124,7 +124,7 @@ A console message, implementation detail, or visual difference is not automatica
 bug. Relate it to a violated observable contract or report it as non-blocking runtime
 evidence with its uncertainty.
 
-### 4. Confirm before reporting
+### [SANE-QA-CONFIRM] Confirm before reporting
 
 Reproduce a suspected issue from a known state. Repeat the decisive path at least once
 when safe and practical, and vary one relevant condition if that helps distinguish a
@@ -140,14 +140,14 @@ Classify the result as:
   test.
 - **Unverified:** evidence is insufficient; state exactly what is missing.
 
-Severity follows concrete user or business consequence and reachability, not cosmetic
-labels or issue quotas.
+Severity uses the scale in `sane-code/conventions.md`, mapped from concrete user or
+business consequence and reachability, never from cosmetic labels or issue quotas.
 
-### 5. Record reproducible evidence
+### [SANE-QA-EVIDENCE] Record reproducible evidence
 
 Each confirmed or intermittent issue should include:
 
-- concise title and impact-based severity;
+- concise title and severity (`critical`, `warning`, or `info`);
 - tested revision, environment, URL/route, actor, and data preconditions;
 - minimal numbered reproduction steps;
 - expected versus actual observable behavior;
@@ -156,23 +156,24 @@ Each confirmed or intermittent issue should include:
   console/network excerpt, or timestamp—using only what proves the claim;
 - known scope, uncertainty, and the smallest useful retest.
 
-Store ephemeral screenshots and machine-readable evidence under `.local/` when useful
-and keep secrets and unnecessary personal data out. After `sane-browse` creates a
-screenshot, use the Read tool so it is visible to the user. Do not commit QA artifacts.
+Store ephemeral screenshots and machine-readable evidence in the project's gitignored
+artifact directory (`.local/` by default) when useful, and keep secrets and
+unnecessary personal data out. After `sane-browse` creates a screenshot, use the
+host's file-reading tool so it is visible to the user. Do not commit QA artifacts.
 
-## Fix requests
+## [SANE-QA-FIX-HANDOFF] Fix requests
 
 Routine QA is read-only with respect to source code. Do not automatically fix, generate
 regression tests, commit, revert, or widen scope. When the user explicitly requests a
-fix, hand each confirmed issue to `sane-debug` with its contract, impact, reproduction,
-environment, and evidence. `sane-debug` owns root-cause analysis and the minimal code
+fix, hand each confirmed issue to `sane-debug` as the handoff packet defined in
+`sane-code/conventions.md`. `sane-debug` owns root-cause analysis and the minimal code
 and test changes.
 
 After a reported fix, rerun the original reproduction under equivalent conditions and
 test only adjacent risks introduced by the fix. Report it as verified, still failing,
 intermittent, blocked, or unverified. Never claim a fix from code inspection alone.
 
-## Report and publishing
+## [SANE-QA-REPORT] Report and publishing
 
 Report:
 
@@ -184,8 +185,8 @@ Report:
 - remaining risk and explicitly excluded scope.
 
 When a PR exists, discover its metadata with the repository's GitHub tooling and post
-one new machine-parseable QA comment; do not edit previous comments. Publish only
-sanitized evidence and link or summarize `.local/` artifacts as the environment allows.
-When no PR exists, return the report in the response or write it under `.local/` if a
-persistent artifact is useful or requested. Never create QA reports in committed
-project files.
+one new comment in the envelope defined in `sane-code/conventions.md`; do not edit
+previous comments. Publish only sanitized evidence and link or summarize the stored
+artifacts as the environment allows. When no PR exists, return the report in the
+response or write it to the artifact directory if a persistent artifact is useful or
+requested. Never create QA reports in committed project files.

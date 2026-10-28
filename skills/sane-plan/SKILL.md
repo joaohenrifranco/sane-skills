@@ -1,26 +1,26 @@
 ---
 name: sane-plan
-version: 4.0.0
+version: 6.0.0
 description: |
-  Opinionated planning for features, refactors, and architecture decisions. Chooses
-  the smallest design that protects real ownership, dependency, consistency, and
-  evolution boundaries, with explicit tradeoffs and concise implementation scope.
+  Opinionated planning for features, refactors, and architecture decisions. Use
+  before implementing a non-trivial change, when choosing between designs, or when
+  asked to plan, scope, or estimate the shape of work. Chooses the smallest design
+  that protects real ownership, dependency, consistency, and evolution boundaries,
+  with explicit tradeoffs and concise implementation scope.
 ---
 
-# /sane-plan — Smallest Defensible Design
+# sane-plan — Smallest Defensible Design
 
 Planning mode decides what should change and why; it does not implement application
 code. Follow repository guidance and load the applicable `sane-code` rules before
-making technical recommendations.
+making technical recommendations. Cite rule IDs for the boundaries a plan protects.
 
 ## Operating position
 
-Prefer direct changes in the existing owner. Introduce a seam, service, contract,
-state machine, queue, cache, shared model, or migration only when it protects a
-concrete ownership, dependency, consistency, or independent-evolution boundary.
-Keep business policy independent of delivery and infrastructure, make state and
-side-effect ownership explicit, and keep strong consistency local to a named
-boundary.
+Prefer direct changes in the existing owner (`SANE-ARCH-RESPONSIBILITY-OWNERSHIP`).
+Introduce a seam, service, contract, state machine, queue, cache, shared model, or
+migration only when it protects a concrete ownership, dependency, consistency, or
+independent-evolution boundary.
 
 Reject speculative abstraction, symmetry for its own sake, broad cleanup disguised
 as prerequisite work, and distributed machinery for failures that can be handled
@@ -64,14 +64,12 @@ translation. Describe the concrete benefit, cost, failure mode, and future const
 of viable options; dismiss dominated or speculative alternatives briefly rather than
 manufacturing a fixed option count.
 
-Prefer:
-
-- direct code over indirection without an independent reason to change;
-- one explicit owner over shared mutation;
-- local transactions over distributed consistency;
-- translated contracts over shared internal models across evolving contexts;
-- explicit idempotency, durable state, and reconciliation when work can repeat,
-  overlap, arrive late, or partially complete.
+Prefer direct code over indirection without an independent reason to change, one
+explicit owner over shared mutation (`SANE-ARCH-SINGLE-STATE-OWNER`), local
+transactions over distributed consistency (`SANE-ARCH-LOCAL-CONSISTENCY`), translated
+contracts over shared internal models (`SANE-ARCH-CONTEXT-CONTRACTS`), and explicit
+idempotency, durable state, and reconciliation when work can repeat, overlap, arrive
+late, or partially complete (`SANE-CORRECT-DURABLE-PROGRESS`).
 
 Exceptions are bounded by the evidence: duplication may be cheaper than coupling,
 a tactical adapter may be safer than immediate migration, and an existing imperfect

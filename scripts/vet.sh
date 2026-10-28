@@ -99,5 +99,36 @@ else
   fail "README version table out of sync"
 fi
 
+# 8. All skills carry the same version (bumped together per release)
+VERSIONS=$(for f in "${SKILLS[@]}"; do awk 'NR<=6 && /^version:/{print $2; exit}' "$f"; done | sort -u)
+if [ "$(printf '%s\n' "$VERSIONS" | wc -l | tr -d ' ')" -eq 1 ]; then
+  pass "all skills share version $VERSIONS"
+else
+  fail "skill versions differ: $(printf '%s ' $VERSIONS)"
+fi
+
+# 9. A heading that carries a SANE ID starts with it, and prose cites IDs without brackets
+BAD_HEADINGS=$(grep -n -E '^#{1,6} .*\[SANE-' skills/*/SKILL.md skills/sane-code/rules/*.md 2>/dev/null | grep -Ev ':#{1,6} \[SANE-' || true)
+if [ -n "$BAD_HEADINGS" ]; then
+  fail "SANE ID is not at the start of its heading: ${BAD_HEADINGS//$'\n'/ | }"
+else
+  pass "SANE IDs lead their headings"
+fi
+
+# 10. Every rules file is registered in sane-code's authoring and routing sections
+UNREGISTERED=0
+for rf in skills/sane-code/rules/*.md; do
+  rn=$(basename "$rf")
+  if ! grep -Fq "\`$rn\`" skills/sane-code/SKILL.md; then
+    echo "  skills/sane-code/SKILL.md does not mention $rn"
+    UNREGISTERED=1
+  fi
+done
+if [ "$UNREGISTERED" -eq 0 ]; then
+  pass "every rules file is registered in sane-code"
+else
+  fail "unregistered rules file"
+fi
+
 [ "$FAIL" -eq 0 ] || { printf 'vet FAILED with %d failure(s)\n' "$FAIL"; exit 1; }
 printf 'vet PASSED\n'
