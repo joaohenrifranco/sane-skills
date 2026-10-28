@@ -9,14 +9,9 @@ description: |
 
 # sane-benchmark — Runtime Measurement
 
-Use the browser runtime supplied by `sane-browse` or the host environment.
-Confirm that `$B` is available before measuring. If it is unavailable, follow the
-setup guidance in `sane-browse` rather than assuming a tool, package manager, or
-repository path.
+Use the browser runtime supplied by `sane-browse` or the host environment. Confirm that `$B` is available before measuring. If it is unavailable, follow the setup guidance in `sane-browse` rather than assuming a tool, package manager, or repository path.
 
-This skill measures and narrows a runtime performance problem. It does not make
-code changes. When measurements justify code investigation, hand one measured
-bottleneck to `sane-debug`.
+This skill measures and narrows a runtime performance problem. It does not make code changes. When measurements justify code investigation, hand one measured bottleneck to `sane-debug`.
 
 ## Arguments
 
@@ -25,13 +20,10 @@ Invoked as `/sane-benchmark <url>` with these forms:
 - `/sane-benchmark <url>` — measure, diagnose one bottleneck, and report
 - `/sane-benchmark <url> --measure` — measure only and print the scorecard
 - `/sane-benchmark <url> --baseline` — capture a comparison baseline
-- `/sane-benchmark --diff` — remeasure explicitly identified branch-affected
-  pages and compare them with a compatible baseline
-- `/sane-benchmark <url> --focus <metric>` — constrain diagnosis to `fcp`,
-  `bundle`, `ttfb`, or `network`
+- `/sane-benchmark --diff` — remeasure explicitly identified branch-affected pages and compare them with a compatible baseline
+- `/sane-benchmark <url> --focus <metric>` — constrain diagnosis to `fcp`, `bundle`, `ttfb`, or `network`
 
-If `--diff` cannot determine affected pages from project evidence, ask for the
-URLs. Do not invent route coverage from filenames alone.
+If `--diff` cannot determine affected pages from project evidence, ask for the URLs. Do not invent route coverage from filenames alone.
 
 ## Measurement contract
 
@@ -45,29 +37,15 @@ Before running, define and report:
 - the workload and its completion condition;
 - repetition count and aggregation method.
 
-Use project performance budgets, measurement protocols, and production telemetry
-when available. They take precedence over defaults in this skill.
+Use project performance budgets, measurement protocols, and production telemetry when available. They take precedence over defaults in this skill.
 
-If the user or project provides no protocol, use this **provisional default**:
-a desktop viewport, the runtime's unthrottled local conditions, one warm-up run,
-then five measured runs with the median as the comparison value and the full
-range shown. This default improves repeatability but does not represent every
-user device or network; a project whose users are mostly on phones should set a
-mobile viewport and shaping in its own guidance. Keep conditions identical for
-before/after comparisons.
+If the user or project provides no protocol, use this **provisional default**: a desktop viewport, the runtime's unthrottled local conditions, one warm-up run, then five measured runs with the median as the comparison value and the full range shown. This default improves repeatability but does not represent every user device or network; a project whose users are mostly on phones should set a mobile viewport and shaping in its own guidance. Keep conditions identical for before/after comparisons.
 
-A representative workload is the smallest real user journey that exhibits the
-reported problem, including realistic data volume and an observable completion
-condition. For a page-load report, measure navigation through meaningful content
-readiness. For interaction lag, measure the named interaction rather than using
-page load as a proxy. If no workload is supplied, state the chosen workload and
-why available evidence makes it representative.
+A representative workload is the smallest real user journey that exhibits the reported problem, including realistic data volume and an observable completion condition. For a page-load report, measure navigation through meaningful content readiness. For interaction lag, measure the named interaction rather than using page load as a proxy. If no workload is supplied, state the chosen workload and why available evidence makes it representative.
 
 ## [SANE-BENCHMARK-MEASURE] Phase 1: Measure
 
-Create a `benchmark/` folder in the project's gitignored artifact directory
-(`.local/` by default) if artifacts will be saved. For each measured run, start
-from the declared cache/auth state and execute the same workload.
+Create a `benchmark/` folder in the project's gitignored artifact directory (`.local/` by default) if artifacts will be saved. For each measured run, start from the declared cache/auth state and execute the same workload.
 
 ```bash
 $B viewport <WxH>
@@ -77,23 +55,14 @@ $B eval scripts/navigation-timing.js
 $B eval scripts/resources.js
 ```
 
-The scripts live in `scripts/` beside this file. `$B eval` reads only files inside
-the working directory or the system temporary directory, so use the real path of
-the script, or copy it to the temporary directory when the skill is installed
-elsewhere.
+The scripts live in `scripts/` beside this file. `$B eval` reads only files inside the working directory or the system temporary directory, so use the real path of the script, or copy it to the temporary directory when the skill is installed elsewhere.
 
 - `navigation-timing.js` prints the navigation entry and the paint entries.
-- `resources.js` prints every resource entry sorted by duration, with request
-  and byte totals grouped by initiator type.
+- `resources.js` prints every resource entry sorted by duration, with request and byte totals grouped by initiator type.
 
-`transferSize` may be zero for cached, cross-origin, or unavailable timing data;
-do not describe it as bundle size without confirming what the entries include.
-Separate JavaScript transfer from total transfer by filtering resource URLs or
-initiator types using evidence appropriate to the application.
+`transferSize` may be zero for cached, cross-origin, or unavailable timing data; do not describe it as bundle size without confirming what the entries include. Separate JavaScript transfer from total transfer by filtering resource URLs or initiator types using evidence appropriate to the application.
 
-For long tasks during an interaction, install the observer **before** the
-representative action, perform that action, wait for its declared completion
-condition, and then read the result:
+For long tasks during an interaction, install the observer **before** the representative action, perform that action, wait for its declared completion condition, and then read the result:
 
 ```bash
 $B eval scripts/longtask-start.js
@@ -101,10 +70,7 @@ $B eval scripts/longtask-start.js
 $B eval scripts/longtask-read.js
 ```
 
-This observer measures only the interval in which it is active. Do not present it
-as initial-load coverage when it was registered after navigation. If the runtime
-does not expose an entry or metric, report it as unavailable rather than
-estimating it.
+This observer measures only the interval in which it is active. Do not present it as initial-load coverage when it was registered after navigation. If the runtime does not expose an entry or metric, report it as unavailable rather than estimating it.
 
 ### Scorecard
 
@@ -129,11 +95,7 @@ EVIDENCE FOR DIAGNOSIS:
   [resource, request, timing, or task directly relevant to the chosen bottleneck]
 ```
 
-Report raw values before labels. Use `GOOD`, `SLOW`, `CRITICAL`, `BLOATED`, or a
-pass/fail result only when a project budget, SLO, product requirement, or cited
-external standard defines that label for this workload. If the team asks for a
-triage threshold and none exists, propose it explicitly as a provisional local
-default and do not present it as a universal performance boundary.
+Report raw values before labels. Use `GOOD`, `SLOW`, `CRITICAL`, `BLOATED`, or a pass/fail result only when a project budget, SLO, product requirement, or cited external standard defines that label for this workload. If the team asks for a triage threshold and none exists, propose it explicitly as a provisional local default and do not present it as a universal performance boundary.
 
 If `--measure` is set, stop here.
 
@@ -141,22 +103,13 @@ If `--measure` is set, stop here.
 
 Choose exactly one bottleneck supported by the scorecard or by `--focus`:
 
-- TTFB (`--focus ttfb`): navigation timing shows time concentrated before the
-  response begins.
-- Render start (`--focus fcp`): paint is late and the request/render evidence
-  identifies a blocking dependency or main-thread interval.
-- JavaScript transfer (`--focus bundle`): confirmed JavaScript resources dominate
-  the relevant transfer or loading interval.
-- Network waterfall (`--focus network`): dependent or serialized requests delay the
-  workload's completion condition.
-- Long task: the representative interaction records main-thread blocking in the
-  measured interval. It has no `--focus` value because it needs an interaction.
+- TTFB (`--focus ttfb`): navigation timing shows time concentrated before the response begins.
+- Render start (`--focus fcp`): paint is late and the request/render evidence identifies a blocking dependency or main-thread interval.
+- JavaScript transfer (`--focus bundle`): confirmed JavaScript resources dominate the relevant transfer or loading interval.
+- Network waterfall (`--focus network`): dependent or serialized requests delay the workload's completion condition.
+- Long task: the representative interaction records main-thread blocking in the measured interval. It has no `--focus` value because it needs an interaction.
 
-Do not map a metric directly to a generic fix. For example, a large transfer does
-not by itself prove code splitting is appropriate, and a long task does not by
-itself prove memoization or virtualization is the remedy. If no single
-bottleneck is supported, report that the measurement is inconclusive and name
-the next discriminating measurement.
+Do not map a metric directly to a generic fix. For example, a large transfer does not by itself prove code splitting is appropriate, and a long task does not by itself prove memoization or virtualization is the remedy. If no single bottleneck is supported, report that the measurement is inconclusive and name the next discriminating measurement.
 
 ## [SANE-BENCHMARK-INTERPRET] Phase 3: Interpret
 
@@ -168,14 +121,11 @@ For the selected bottleneck, record:
 4. plausible ownership boundaries to investigate, labeled as hypotheses;
 5. missing evidence that could overturn the conclusion.
 
-Do not infer a code root cause from one timing, blame infrastructure or a third
-party without evidence, or broaden the report into a generic optimization
-wishlist.
+Do not infer a code root cause from one timing, blame infrastructure or a third party without evidence, or broaden the report into a generic optimization wishlist.
 
 ## [SANE-BENCHMARK-FIX-HANDOFF] Phase 4: Hand off a fix
 
-If code investigation is warranted, hand `sane-debug` the bounded packet defined in
-`sane-code/conventions.md`, filled with:
+If code investigation is warranted, hand `sane-debug` the bounded packet defined in `sane-code/conventions.md`, filled with:
 
 - one bottleneck and affected workload;
 - raw measurements and artifact paths;
@@ -184,15 +134,11 @@ If code investigation is warranted, hand `sane-debug` the bounded packet defined
 - hypotheses and known unknowns;
 - the metric and completion condition to remeasure.
 
-`sane-debug` owns root-cause analysis and the minimal code fix. Do not prescribe
-an implementation from benchmark data alone. Change and evaluate one causal
-factor at a time.
+`sane-debug` owns root-cause analysis and the minimal code fix. Do not prescribe an implementation from benchmark data alone. Change and evaluate one causal factor at a time.
 
 ## [SANE-BENCHMARK-VERIFY] Phase 5: Verify
 
-Repeat the Phase 1 protocol under compatible conditions and the same workload.
-Do not reduce the run count or switch cache, viewport, data, shaping, or
-completion conditions between before and after.
+Repeat the Phase 1 protocol under compatible conditions and the same workload. Do not reduce the run count or switch cache, viewport, data, shaping, or completion conditions between before and after.
 
 ```bash
 $B viewport <WxH>
@@ -200,24 +146,13 @@ $B goto <url>
 $B perf
 ```
 
-Print the before/after absolute delta, percentage delta, run ranges, and project
-budget result when one exists. Call an improvement or regression only when the
-before and after run ranges do not overlap, or the median crosses an applicable
-budget. Otherwise report the result as inconclusive. Do not use a universal
-percentage cutoff.
+Print the before/after absolute delta, percentage delta, run ranges, and project budget result when one exists. Call an improvement or regression only when the before and after run ranges do not overlap, or the median crosses an applicable budget. Otherwise report the result as inconclusive. Do not use a universal percentage cutoff.
 
 ## Baseline / Diff
 
-`--baseline` saves the scorecard values and full measurement contract to
-`benchmark/baseline.json` in the artifact directory. A baseline without context is
-not reusable.
+`--baseline` saves the scorecard values and full measurement contract to `benchmark/baseline.json` in the artifact directory. A baseline without context is not reusable.
 
-`--diff` compares only explicitly identified affected pages with baseline entries
-whose workload, environment, viewport, cache, shaping, authentication/data, and
-metric definitions are compatible. Report incompatible or missing baselines
-instead of calculating a misleading delta. Apply project-defined regression
-budgets; if none exist, report deltas and noise without inventing pass/fail
-labels.
+`--diff` compares only explicitly identified affected pages with baseline entries whose workload, environment, viewport, cache, shaping, authentication/data, and metric definitions are compatible. Report incompatible or missing baselines instead of calculating a misleading delta. Apply project-defined regression budgets; if none exist, report deltas and noise without inventing pass/fail labels.
 
 ## Rules
 
