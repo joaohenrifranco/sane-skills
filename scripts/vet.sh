@@ -130,5 +130,16 @@ else
   fail "unregistered rules file"
 fi
 
+# 11. Markdown prose is written one paragraph per line (needs bun; skipped without it)
+if command -v bun >/dev/null 2>&1; then
+  if bun scripts/unwrap-markdown.ts --check --tracked >/dev/null 2>&1; then
+    pass "Markdown prose is not hard-wrapped"
+  else
+    fail "hard-wrapped Markdown prose (fix: bun scripts/unwrap-markdown.ts --write --tracked)"
+  fi
+else
+  printf 'SKIP Markdown wrap check (bun is not installed)\n'
+fi
+
 [ "$FAIL" -eq 0 ] || { printf 'vet FAILED with %d failure(s)\n' "$FAIL"; exit 1; }
 printf 'vet PASSED\n'
