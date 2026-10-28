@@ -1,13 +1,21 @@
 ---
 name: sane-debug
-version: 3.0.0
+version: 6.0.0
 description: |
-  Evidence-led debugging for bugs and errors. Isolates the originating cause,
-  fixes the responsible boundary with the smallest justified change, and verifies
-  behavior without mandatory ritual or speculative patches.
+  Evidence-led debugging for bugs and errors. Use when investigating a bug, error,
+  failing test, regression, or unexpected behavior, including a confirmed issue or
+  measured bottleneck handed off by `sane-qa` or `sane-benchmark`. Isolates the
+  originating cause, fixes the responsible boundary with the smallest justified
+  change, and verifies behavior without mandatory ritual or speculative patches.
 ---
 
-# /sane-debug — Evidence-Led Root-Cause Investigation
+# sane-debug — Evidence-Led Root-Cause Investigation
+
+## Input
+
+The input is a symptom report: a user description, an error, a failing check, or the
+handoff packet defined in `sane-code/conventions.md`. Treat a packet's hypotheses as
+claims to test, not conclusions, and gather your own evidence before editing code.
 
 ## Operating position
 
@@ -70,10 +78,10 @@ while each check is safe and materially narrows the cause.
 
 Change the boundary that owns the violated invariant with the smallest fix that makes
 invalid behavior impossible or explicitly recoverable. Preserve unrelated behavior
-and avoid opportunistic cleanup. For external or asynchronous work, use explicit
-state, idempotency, durable progress, or reconciliation when evidence shows repeats,
-overlap, delay, or partial completion are part of the cause; do not add distributed
-machinery to a purely local failure.
+and avoid opportunistic cleanup. When evidence shows repeats, overlap, delay, or
+partial completion are part of the cause of external or asynchronous work, apply
+`SANE-CORRECT-AT-LEAST-ONCE` and `SANE-CORRECT-DURABLE-PROGRESS`; do not add
+distributed machinery to a purely local failure.
 
 A containment patch is acceptable when impact is active and the root fix is unsafe or
 slow, but label it as containment, bound its lifetime or removal condition, and retain
@@ -83,10 +91,10 @@ a path to the owning fix.
 
 Demonstrate that the evidence which exposed the bug changes as predicted and that the
 relevant surrounding behavior remains intact. Run the narrowest meaningful automated
-checks first and broaden only for plausible blast radius. Add regression coverage when
-it can reproduce the contract or invariant reliably; prefer instrumentation or an
-operational check when automation would be flaky, unsafe, or unable to represent the
-failure. State what was not verified and why.
+checks first and broaden only for plausible blast radius. Regression coverage follows
+`SANE-TEST-REGRESSION-COVERAGE`; prefer instrumentation or an operational check
+(`SANE-OPS-CORRELATED-SIGNALS`) when automation would be flaky, unsafe, or unable to
+represent the failure. State what was not verified and why.
 
 ## Output contract
 

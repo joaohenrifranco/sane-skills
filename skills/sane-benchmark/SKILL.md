@@ -1,24 +1,26 @@
 ---
 name: sane-benchmark
-version: 5.0.0
+version: 6.0.0
 description: |
   Evidence-based runtime performance measurement for live sites. Use when:
   "slow", "performance", "benchmark", "laggy", "page speed", "bundle size",
   "why is X slow", or "optimize".
 ---
 
-# Runtime measurement (invoked as /sane-benchmark <url>)
+# sane-benchmark — Runtime Measurement
 
 Use the browser runtime supplied by `sane-browse` or the host environment.
-Confirm that `$B` is available before measuring. If it is unavailable, request
-the host project's setup instructions rather than assuming a tool, package
-manager, or repository path.
+Confirm that `$B` is available before measuring. If it is unavailable, follow the
+setup guidance in `sane-browse` rather than assuming a tool, package manager, or
+repository path.
 
 This skill measures and narrows a runtime performance problem. It does not make
 code changes. When measurements justify code investigation, hand one measured
 bottleneck to `sane-debug`.
 
 ## Arguments
+
+Invoked as `/sane-benchmark <url>` with these forms:
 
 - `/sane-benchmark <url>` — measure, diagnose one bottleneck, and report
 - `/sane-benchmark <url> --measure` — measure only and print the scorecard
@@ -43,14 +45,16 @@ Before running, define and report:
 - the workload and its completion condition;
 - repetition count and aggregation method.
 
-Use project performance budgets and production telemetry when available. They
-take precedence over defaults in this skill.
+Use project performance budgets, measurement protocols, and production telemetry
+when available. They take precedence over defaults in this skill.
 
 If the user or project provides no protocol, use this **provisional default**:
 a desktop viewport, the runtime's unthrottled local conditions, one warm-up run,
-then three measured runs with the median as the comparison value and the full
+then five measured runs with the median as the comparison value and the full
 range shown. This default improves repeatability but does not represent every
-user device or network. Keep conditions identical for before/after comparisons.
+user device or network; a project whose users are mostly on phones should set a
+mobile viewport and shaping in its own guidance. Keep conditions identical for
+before/after comparisons.
 
 A representative workload is the smallest real user journey that exhibits the
 reported problem, including realistic data volume and an observable completion
@@ -59,20 +63,28 @@ readiness. For interaction lag, measure the named interaction rather than using
 page load as a proxy. If no workload is supplied, state the chosen workload and
 why available evidence makes it representative.
 
-## Phase 1: Measure [SANE-BENCHMARK-MEASURE]
+## [SANE-BENCHMARK-MEASURE] Phase 1: Measure
 
-Create `.local/benchmark` if artifacts will be saved. For each measured run,
-start from the declared cache/auth state and execute the same workload.
+Create a `benchmark/` folder in the project's gitignored artifact directory
+(`.local/` by default) if artifacts will be saved. For each measured run, start
+from the declared cache/auth state and execute the same workload.
 
 ```bash
 $B viewport <WxH>
 $B goto <url>
 $B perf
-$B js "JSON.stringify(performance.getEntriesByType('navigation')[0])"
-$B js "JSON.stringify(performance.getEntriesByType('paint'))"
-$B js "JSON.stringify(performance.getEntriesByType('resource').map(r => ({name: r.name.split('/').pop().split('?')[0], url: r.name, type: r.initiatorType, size: r.transferSize, duration: Math.round(r.duration), start: Math.round(r.startTime)})).sort((a,b) => b.duration - a.duration))"
-$B js "(() => { const r = performance.getEntriesByType('resource'); const byType = r.reduce((a,e) => { const t = e.initiatorType; a[t] = (a[t]||{count:0,bytes:0}); a[t].count++; a[t].bytes += e.transferSize||0; return a; }, {}); return JSON.stringify({total_requests: r.length, total_bytes: r.reduce((s,e) => s+(e.transferSize||0),0), by_type: byType}); })()"
+$B eval scripts/navigation-timing.js
+$B eval scripts/resources.js
 ```
+
+The scripts live in `scripts/` beside this file. `$B eval` reads only files inside
+the working directory or the system temporary directory, so use the real path of
+the script, or copy it to the temporary directory when the skill is installed
+elsewhere.
+
+- `navigation-timing.js` prints the navigation entry and the paint entries.
+- `resources.js` prints every resource entry sorted by duration, with request
+  and byte totals grouped by initiator type.
 
 `transferSize` may be zero for cached, cross-origin, or unavailable timing data;
 do not describe it as bundle size without confirming what the entries include.
@@ -84,9 +96,9 @@ representative action, perform that action, wait for its declared completion
 condition, and then read the result:
 
 ```bash
-$B js "(() => { window.__lt = []; window.__ltObs?.disconnect(); window.__ltObs = new PerformanceObserver(l => window.__lt.push(...l.getEntries())); window.__ltObs.observe({ type: 'longtask', buffered: true }); return 'longtask observer registered'; })()"
+$B eval scripts/longtask-start.js
 # Perform the representative interaction here.
-$B js "JSON.stringify({ count: window.__lt.length, total_block_ms: Math.round(window.__lt.reduce((s,e) => s+e.duration,0)), longest_ms: Math.round(Math.max(0,...window.__lt.map(e => e.duration))) })"
+$B eval scripts/longtask-read.js
 ```
 
 This observer measures only the interval in which it is active. Do not present it
@@ -125,19 +137,20 @@ default and do not present it as a universal performance boundary.
 
 If `--measure` is set, stop here.
 
-## Phase 2: Diagnose [SANE-BENCHMARK-DIAGNOSE]
+## [SANE-BENCHMARK-DIAGNOSE] Phase 2: Diagnose
 
 Choose exactly one bottleneck supported by the scorecard or by `--focus`:
 
-- TTFB: navigation timing shows time concentrated before the response begins.
-- Render start/FCP: paint is late and the request/render evidence identifies a
-  blocking dependency or main-thread interval.
-- JavaScript transfer: confirmed JavaScript resources dominate the relevant
-  transfer or loading interval.
+- TTFB (`--focus ttfb`): navigation timing shows time concentrated before the
+  response begins.
+- Render start (`--focus fcp`): paint is late and the request/render evidence
+  identifies a blocking dependency or main-thread interval.
+- JavaScript transfer (`--focus bundle`): confirmed JavaScript resources dominate
+  the relevant transfer or loading interval.
+- Network waterfall (`--focus network`): dependent or serialized requests delay the
+  workload's completion condition.
 - Long task: the representative interaction records main-thread blocking in the
-  measured interval.
-- Network waterfall: dependent or serialized requests delay the workload's
-  completion condition.
+  measured interval. It has no `--focus` value because it needs an interaction.
 
 Do not map a metric directly to a generic fix. For example, a large transfer does
 not by itself prove code splitting is appropriate, and a long task does not by
@@ -145,7 +158,7 @@ itself prove memoization or virtualization is the remedy. If no single
 bottleneck is supported, report that the measurement is inconclusive and name
 the next discriminating measurement.
 
-## Phase 3: Interpret [SANE-BENCHMARK-INTERPRET]
+## [SANE-BENCHMARK-INTERPRET] Phase 3: Interpret
 
 For the selected bottleneck, record:
 
@@ -159,10 +172,10 @@ Do not infer a code root cause from one timing, blame infrastructure or a third
 party without evidence, or broaden the report into a generic optimization
 wishlist.
 
-## Phase 4: Validate a fix [SANE-BENCHMARK-FIX-HANDOFF]
+## [SANE-BENCHMARK-FIX-HANDOFF] Phase 4: Hand off a fix
 
-If code investigation is warranted, hand the following bounded packet to
-`sane-debug`:
+If code investigation is warranted, hand `sane-debug` the bounded packet defined in
+`sane-code/conventions.md`, filled with:
 
 - one bottleneck and affected workload;
 - raw measurements and artifact paths;
@@ -175,7 +188,7 @@ If code investigation is warranted, hand the following bounded packet to
 an implementation from benchmark data alone. Change and evaluate one causal
 factor at a time.
 
-## Phase 5: Verify [SANE-BENCHMARK-VERIFY]
+## [SANE-BENCHMARK-VERIFY] Phase 5: Verify
 
 Repeat the Phase 1 protocol under compatible conditions and the same workload.
 Do not reduce the run count or switch cache, viewport, data, shaping, or
@@ -189,14 +202,15 @@ $B perf
 
 Print the before/after absolute delta, percentage delta, run ranges, and project
 budget result when one exists. Call an improvement or regression only when the
-difference is larger than observed measurement noise or crosses an applicable
+before and after run ranges do not overlap, or the median crosses an applicable
 budget. Otherwise report the result as inconclusive. Do not use a universal
 percentage cutoff.
 
 ## Baseline / Diff
 
 `--baseline` saves the scorecard values and full measurement contract to
-`.local/benchmark/baseline.json`. A baseline without context is not reusable.
+`benchmark/baseline.json` in the artifact directory. A baseline without context is
+not reusable.
 
 `--diff` compares only explicitly identified affected pages with baseline entries
 whose workload, environment, viewport, cache, shaping, authentication/data, and
