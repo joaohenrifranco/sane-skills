@@ -156,7 +156,7 @@ describe('chromium import (module level, injected key)', () => {
   test('--verify-auth splits selector and text outside brackets and quotes', () => {
     expect(textSeparator('h1=Welcome')).toBe(2);
     expect(textSeparator('a[aria-label*="Google Account"]')).toBe(-1);
-    expect(textSeparator('a[href="/me"]=João')).toBe(13);
+    expect(textSeparator('a[href="/me"]=Ada')).toBe(13);
   });
 
   test('helpers', () => {
