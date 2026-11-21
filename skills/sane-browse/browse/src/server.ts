@@ -1,369 +1,226 @@
 /**
- * sane browse server — persistent Chromium daemon
+ * browse server — persistent Chromium daemon, one per project.
  *
- * Architecture:
- *   Bun.serve HTTP on localhost → routes commands to Playwright
- *   Console/network/dialog buffers: CircularBuffer in-memory + async disk flush
- *   Chromium crash → server EXITS with clear error (CLI auto-restarts)
- *   Auto-shutdown after BROWSE_IDLE_TIMEOUT (default 30 min)
+ *   Bun.serve on 127.0.0.1 (random port) → commands → Playwright
+ *   Auth: bearer token from the 0600 state file
+ *   Config: BROWSE_CONFIG (paths) + BROWSE_LAUNCH (headed/profile/proxy), from the CLI
+ *   Idle shutdown after BROWSE_IDLE_TIMEOUT ms (default 30 min; never during a handoff)
  *
- * State:
- *   State file: <project-root>/.agents/.context/browse.json (set via BROWSE_STATE_FILE env)
- *   Log files:  <project-root>/.agents/.context/browse-{console,network,dialog}.log
- *   Port:       random 10000-60000 (or BROWSE_PORT env for debug override)
+ * Responses: 200 text on success; on error JSON {error, hint?, code} with
+ * code usage (400) | needs_user (409) | failed (500).
  */
 
 import { BrowserManager } from './browser-manager';
-import { handleReadCommand } from './read-commands';
-import { handleWriteCommand } from './write-commands';
-import { handleMetaCommand } from './meta-commands';
+import { runOne } from './meta-commands';
 import { handleCookiePickerRoute } from './cookie-picker-routes';
-import { COMMAND_DESCRIPTIONS } from './commands';
+import { generateHelpText } from './commands';
 import { SNAPSHOT_FLAGS } from './snapshot';
-import { resolveConfig, ensureStateDir, readVersionHash } from './config';
+import { resolveConfig, ensureStateDir, type LaunchConfig } from './config';
+import { BrowseError } from './errors';
+import { requestContext } from './request-context';
+import { stopDisplay } from './launch';
+import { consoleBuffer, networkBuffer, dialogBuffer } from './buffers';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
-// ─── Config ─────────────────────────────────────────────────────
 const config = resolveConfig();
 ensureStateDir(config);
 
-// ─── Auth ───────────────────────────────────────────────────────
+const launch: LaunchConfig = process.env.BROWSE_LAUNCH
+  ? JSON.parse(process.env.BROWSE_LAUNCH)
+  : { headed: false, profileDir: null, proxy: null, proxyBypass: null };
+
 const AUTH_TOKEN = crypto.randomUUID();
 const BROWSE_PORT = parseInt(process.env.BROWSE_PORT || '0', 10);
-const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSE_IDLE_TIMEOUT || '1800000', 10); // 30 min
+const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSE_IDLE_TIMEOUT || '1800000', 10);
+const SERVER_VERSION = '3';
 
-function validateAuth(req: Request): boolean {
-  const header = req.headers.get('authorization');
-  return header === `Bearer ${AUTH_TOKEN}`;
-}
-
-// ─── Help text (auto-generated from COMMAND_DESCRIPTIONS) ────────
-function generateHelpText(): string {
-  // Group commands by category
-  const groups = new Map<string, string[]>();
-  for (const [cmd, meta] of Object.entries(COMMAND_DESCRIPTIONS)) {
-    const display = meta.usage || cmd;
-    const list = groups.get(meta.category) || [];
-    list.push(display);
-    groups.set(meta.category, list);
-  }
-
-  const categoryOrder = [
-    'Navigation', 'Reading', 'Interaction', 'Inspection',
-    'Visual', 'Snapshot', 'Meta', 'Tabs', 'Server',
-  ];
-
-  const lines = ['sane browse — headless browser for AI agents', '', 'Commands:'];
-  for (const cat of categoryOrder) {
-    const cmds = groups.get(cat);
-    if (!cmds) continue;
-    lines.push(`  ${(cat + ':').padEnd(15)}${cmds.join(', ')}`);
-  }
-
-  // Snapshot flags from source of truth
-  lines.push('');
-  lines.push('Snapshot flags:');
-  const flagPairs: string[] = [];
-  for (const flag of SNAPSHOT_FLAGS) {
-    const label = flag.valueHint ? `${flag.short} ${flag.valueHint}` : flag.short;
-    flagPairs.push(`${label}  ${flag.long}`);
-  }
-  // Print two flags per line for compact display
-  for (let i = 0; i < flagPairs.length; i += 2) {
-    const left = flagPairs[i].padEnd(28);
-    const right = flagPairs[i + 1] || '';
-    lines.push(`  ${left}${right}`);
-  }
-
-  return lines.join('\n');
-}
-
-// ─── Buffer (from buffers.ts) ────────────────────────────────────
-import { consoleBuffer, networkBuffer, dialogBuffer, addConsoleEntry, addNetworkEntry, addDialogEntry, type LogEntry, type NetworkEntry, type DialogEntry } from './buffers';
-export { consoleBuffer, networkBuffer, dialogBuffer, addConsoleEntry, addNetworkEntry, addDialogEntry, type LogEntry, type NetworkEntry, type DialogEntry };
-
-const CONSOLE_LOG_PATH = config.consoleLog;
-const NETWORK_LOG_PATH = config.networkLog;
-const DIALOG_LOG_PATH = config.dialogLog;
+// ─── Log flushing ──────────────────────────────────────────────
 let lastConsoleFlushed = 0;
 let lastNetworkFlushed = 0;
 let lastDialogFlushed = 0;
-let flushInProgress = false;
 
-async function flushBuffers() {
-  if (flushInProgress) return; // Guard against concurrent flush
-  flushInProgress = true;
-
+function flushBuffers(): void {
   try {
-    // Console buffer
-    const newConsoleCount = consoleBuffer.totalAdded - lastConsoleFlushed;
-    if (newConsoleCount > 0) {
-      const entries = consoleBuffer.last(Math.min(newConsoleCount, consoleBuffer.length));
-      const lines = entries.map(e =>
-        `[${new Date(e.timestamp).toISOString()}] [${e.level}] ${e.text}`
-      ).join('\n') + '\n';
-      fs.appendFileSync(CONSOLE_LOG_PATH, lines);
+    const nc = consoleBuffer.totalAdded - lastConsoleFlushed;
+    if (nc > 0) {
+      const lines = consoleBuffer.last(Math.min(nc, consoleBuffer.length))
+        .map(e => `[${new Date(e.timestamp).toISOString()}] [${e.level}] ${e.text}`).join('\n') + '\n';
+      fs.appendFileSync(config.consoleLog, lines);
       lastConsoleFlushed = consoleBuffer.totalAdded;
     }
-
-    // Network buffer
-    const newNetworkCount = networkBuffer.totalAdded - lastNetworkFlushed;
-    if (newNetworkCount > 0) {
-      const entries = networkBuffer.last(Math.min(newNetworkCount, networkBuffer.length));
-      const lines = entries.map(e =>
-        `[${new Date(e.timestamp).toISOString()}] ${e.method} ${e.url} → ${e.status || 'pending'} (${e.duration || '?'}ms, ${e.size || '?'}B)`
-      ).join('\n') + '\n';
-      fs.appendFileSync(NETWORK_LOG_PATH, lines);
+    const nn = networkBuffer.totalAdded - lastNetworkFlushed;
+    if (nn > 0) {
+      const lines = networkBuffer.last(Math.min(nn, networkBuffer.length))
+        .map(e => `[${new Date(e.timestamp).toISOString()}] ${e.method} ${e.url} → ${e.status || 'pending'} (${e.duration ?? '?'}ms, ${e.size ?? '?'}B)`).join('\n') + '\n';
+      fs.appendFileSync(config.networkLog, lines);
       lastNetworkFlushed = networkBuffer.totalAdded;
     }
-
-    // Dialog buffer
-    const newDialogCount = dialogBuffer.totalAdded - lastDialogFlushed;
-    if (newDialogCount > 0) {
-      const entries = dialogBuffer.last(Math.min(newDialogCount, dialogBuffer.length));
-      const lines = entries.map(e =>
-        `[${new Date(e.timestamp).toISOString()}] [${e.type}] "${e.message}" → ${e.action}${e.response ? ` "${e.response}"` : ''}`
-      ).join('\n') + '\n';
-      fs.appendFileSync(DIALOG_LOG_PATH, lines);
+    const nd = dialogBuffer.totalAdded - lastDialogFlushed;
+    if (nd > 0) {
+      const lines = dialogBuffer.last(Math.min(nd, dialogBuffer.length))
+        .map(e => `[${new Date(e.timestamp).toISOString()}] [${e.type}] "${e.message}" → ${e.action}${e.response ? ` "${e.response}"` : ''}`).join('\n') + '\n';
+      fs.appendFileSync(config.dialogLog, lines);
       lastDialogFlushed = dialogBuffer.totalAdded;
     }
   } catch {
-    // Flush failures are non-fatal — buffers are in memory
-  } finally {
-    flushInProgress = false;
+    // Non-fatal: buffers stay in memory.
   }
 }
-
-// Flush every 1 second
 const flushInterval = setInterval(flushBuffers, 1000);
 
-// ─── Idle Timer ────────────────────────────────────────────────
+// ─── Idle timer ────────────────────────────────────────────────
 let lastActivity = Date.now();
-
-function resetIdleTimer() {
-  lastActivity = Date.now();
-}
-
+let inFlight = 0;
 const idleCheckInterval = setInterval(() => {
-  if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
+  if (inFlight === 0 && !browserManager.isHandoffActive() && Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
     console.log(`[browse] Idle for ${IDLE_TIMEOUT_MS / 1000}s, shutting down`);
     shutdown();
   }
 }, 60_000);
 
-// ─── Command Sets (from commands.ts — single source of truth) ───
-import { READ_COMMANDS, WRITE_COMMANDS, META_COMMANDS } from './commands';
-export { READ_COMMANDS, WRITE_COMMANDS, META_COMMANDS };
-
 // ─── Server ────────────────────────────────────────────────────
-const browserManager = new BrowserManager();
+const browserManager = new BrowserManager(launch);
 let isShuttingDown = false;
 
-// Find port: explicit BROWSE_PORT, or random in 10000-60000
 async function findPort(): Promise<number> {
-  // Explicit port override (for debugging)
-  if (BROWSE_PORT) {
+  if (BROWSE_PORT) return BROWSE_PORT;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const port = 10000 + Math.floor(Math.random() * 50000);
     try {
-      const testServer = Bun.serve({ port: BROWSE_PORT, fetch: () => new Response('ok') });
-      testServer.stop();
-      return BROWSE_PORT;
-    } catch {
-      throw new Error(`[browse] Port ${BROWSE_PORT} (from BROWSE_PORT env) is in use`);
-    }
-  }
-
-  // Random port with retry
-  const MIN_PORT = 10000;
-  const MAX_PORT = 60000;
-  const MAX_RETRIES = 5;
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const port = MIN_PORT + Math.floor(Math.random() * (MAX_PORT - MIN_PORT));
-    try {
-      const testServer = Bun.serve({ port, fetch: () => new Response('ok') });
-      testServer.stop();
+      const probe = Bun.serve({ port, hostname: '127.0.0.1', fetch: () => new Response('ok') });
+      probe.stop(true);
       return port;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
-  throw new Error(`[browse] No available port after ${MAX_RETRIES} attempts in range ${MIN_PORT}-${MAX_PORT}`);
+  throw new Error('[browse] No free port after 5 attempts');
 }
 
-/**
- * Translate Playwright errors into actionable messages for AI agents.
- */
-function wrapError(err: any): string {
-  const msg = err.message || String(err);
-  // Timeout errors
-  if (err.name === 'TimeoutError' || msg.includes('Timeout') || msg.includes('timeout')) {
-    if (msg.includes('locator.click') || msg.includes('locator.fill') || msg.includes('locator.hover')) {
-      return `Element not found or not interactable within timeout. Check your selector or run 'snapshot' for fresh refs.`;
-    }
-    if (msg.includes('page.goto') || msg.includes('Navigation')) {
-      return `Page navigation timed out. The URL may be unreachable or the page may be loading slowly.`;
-    }
-    return `Operation timed out: ${msg.split('\n')[0]}`;
+function toBrowseError(err: any): BrowseError {
+  if (err instanceof BrowseError) return err;
+  const msg = String(err?.message || err);
+  const first = msg.split('\n')[0];
+  if (err?.name === 'TimeoutError' || /Timeout \d+ms exceeded/.test(msg)) {
+    if (/page\.goto|navigat/i.test(msg)) return new BrowseError('Page navigation timed out after 15s.', 'failed', 'The URL may be unreachable or slow; check it, or wait --load.');
+    return new BrowseError(`Operation timed out: ${first}`);
   }
-  // Multiple elements matched
-  if (msg.includes('resolved to') && msg.includes('elements')) {
-    return `Selector matched multiple elements. Be more specific or use @refs from 'snapshot'.`;
+  if (/net::ERR_/.test(msg)) return new BrowseError(first.replace(/^.*?(net::ERR_\w+)/, 'Network error $1'), 'failed');
+  if (/Unexpected token|while parsing (css )?selector|is not a valid selector/i.test(msg)) {
+    return new BrowseError(`Invalid selector: ${first}`, 'usage');
   }
-  // Pass through other errors
-  return msg;
+  return new BrowseError(first);
 }
+
+const STATUS_FOR = { usage: 400, needs_user: 409, failed: 500 } as const;
 
 async function handleCommand(body: any): Promise<Response> {
-  const { command, args = [] } = body;
-
-  if (!command) {
-    return new Response(JSON.stringify({ error: 'Missing "command" field' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  const { command, args = [], cwd, session, timeoutMs } = body ?? {};
+  if (!command || !Array.isArray(args)) {
+    return Response.json({ error: 'Body needs "command" and an "args" array', code: 'usage' }, { status: 400 });
   }
-
+  if (command === 'help') {
+    return new Response(generateHelpText(SNAPSHOT_FLAGS), { headers: { 'Content-Type': 'text/plain' } });
+  }
+  inFlight++;
   try {
-    let result: string;
-
-    if (READ_COMMANDS.has(command)) {
-      result = await handleReadCommand(command, args, browserManager);
-    } else if (WRITE_COMMANDS.has(command)) {
-      result = await handleWriteCommand(command, args, browserManager);
-    } else if (META_COMMANDS.has(command)) {
-      result = await handleMetaCommand(command, args, browserManager, shutdown);
-    } else if (command === 'help') {
-      const helpText = generateHelpText();
-      return new Response(helpText, {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' },
-      });
-    } else {
-      return new Response(JSON.stringify({
-        error: `Unknown command: ${command}`,
-        hint: `Available commands: ${[...READ_COMMANDS, ...WRITE_COMMANDS, ...META_COMMANDS].sort().join(', ')}`,
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
+    const ctx = { cwd: typeof cwd === 'string' ? cwd : process.cwd(), session: session || undefined, timeoutMs: timeoutMs || undefined };
+    const result = await requestContext.run(ctx, async () => {
+      if (ctx.session) await browserManager.ensureSessionTab(ctx.session);
+      return runOne(command, args.map(String), browserManager, config, shutdown);
+    });
     browserManager.resetFailures();
-    return new Response(result, {
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' },
-    });
+    return new Response(result, { headers: { 'Content-Type': 'text/plain' } });
   } catch (err: any) {
-    browserManager.incrementFailures();
-    let errorMsg = wrapError(err);
-    const hint = browserManager.getFailureHint();
-    if (hint) errorMsg += '\n' + hint;
-    return new Response(JSON.stringify({ error: errorMsg }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const e = toBrowseError(err);
+    if (e.code === 'failed') browserManager.incrementFailures();
+    const hint = [e.hint, e.code === 'failed' ? browserManager.getFailureHint() : null].filter(Boolean).join('\n') || undefined;
+    return Response.json({ error: e.message, hint, code: e.code }, { status: STATUS_FOR[e.code] });
+  } finally {
+    inFlight--;
+    lastActivity = Date.now();
   }
 }
 
-async function shutdown() {
+async function shutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
-
   console.log('[browse] Shutting down...');
   clearInterval(flushInterval);
   clearInterval(idleCheckInterval);
-  await flushBuffers(); // Final flush (async now)
-
+  flushBuffers();
   await browserManager.close();
-
-  // Clean up state file
-  try { fs.unlinkSync(config.stateFile); } catch {}
-
+  stopDisplay();
+  try {
+    const state = JSON.parse(fs.readFileSync(config.stateFile, 'utf-8'));
+    if (state.pid === process.pid) fs.unlinkSync(config.stateFile);
+  } catch {}
   process.exit(0);
 }
 
-// Handle signals
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// ─── Start ─────────────────────────────────────────────────────
-async function start() {
-  // Clear old log files
-  try { fs.unlinkSync(CONSOLE_LOG_PATH); } catch {}
-  try { fs.unlinkSync(NETWORK_LOG_PATH); } catch {}
-  try { fs.unlinkSync(DIALOG_LOG_PATH); } catch {}
-
+async function start(): Promise<void> {
+  for (const f of [config.consoleLog, config.networkLog, config.dialogLog]) {
+    try { fs.unlinkSync(f); } catch {}
+  }
   const port = await findPort();
-
-  // Launch browser
   await browserManager.launch();
-
   const startTime = Date.now();
-  const server = Bun.serve({
+
+  Bun.serve({
     port,
     hostname: '127.0.0.1',
+    idleTimeout: 0, // handoff --until and long waits hold the request open
     fetch: async (req) => {
-      resetIdleTimer();
-
+      lastActivity = Date.now();
       const url = new URL(req.url);
-
-      // Cookie picker routes — no auth required (localhost-only)
-      if (url.pathname.startsWith('/cookie-picker')) {
-        return handleCookiePickerRoute(url, req, browserManager);
-      }
-
-      // Health check — no auth required (now async)
+      if (url.pathname.startsWith('/cookie-picker')) return handleCookiePickerRoute(url, req, browserManager);
       if (url.pathname === '/health') {
         const healthy = await browserManager.isHealthy();
-        return new Response(JSON.stringify({
+        return Response.json({
           status: healthy ? 'healthy' : 'unhealthy',
           uptime: Math.floor((Date.now() - startTime) / 1000),
+          mode: browserManager.getMode(),
+          handoff: browserManager.isHandoffActive(),
           tabs: browserManager.getTabCount(),
-          currentUrl: browserManager.getCurrentUrl(),
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
         });
       }
-
-      // All other endpoints require auth
-      if (!validateAuth(req)) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        });
+      if (req.headers.get('authorization') !== `Bearer ${AUTH_TOKEN}`) {
+        return Response.json({ error: 'Unauthorized', code: 'usage' }, { status: 401 });
       }
-
       if (url.pathname === '/command' && req.method === 'POST') {
-        const body = await req.json();
+        const body = await req.json().catch(() => null);
         return handleCommand(body);
       }
-
       return new Response('Not found', { status: 404 });
     },
   });
 
-  // Write state file (atomic: write .tmp then rename)
   const state = {
     pid: process.pid,
     port,
     token: AUTH_TOKEN,
     startedAt: new Date().toISOString(),
+    serverVersion: SERVER_VERSION,
     serverPath: path.resolve(import.meta.dir, 'server.ts'),
-    binaryVersion: readVersionHash() || undefined,
+    launch,
   };
-  const tmpFile = config.stateFile + '.tmp';
-  fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), { mode: 0o600 });
-  fs.renameSync(tmpFile, config.stateFile);
+  const tmp = `${config.stateFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, config.stateFile);
 
   browserManager.serverPort = port;
-  console.log(`[browse] Server running on http://127.0.0.1:${port} (PID: ${process.pid})`);
-  console.log(`[browse] State file: ${config.stateFile}`);
-  console.log(`[browse] Idle timeout: ${IDLE_TIMEOUT_MS / 1000}s`);
+  console.log(`[browse] Server on http://127.0.0.1:${port} (PID ${process.pid}), state ${config.stateFile}`);
 }
 
 start().catch((err) => {
-  console.error(`[browse] Failed to start: ${err.message}`);
+  const e = err instanceof BrowseError ? err : null;
+  // Report launch failures through a file the CLI reads, then exit.
+  try {
+    fs.writeFileSync(`${config.stateFile}.error`, JSON.stringify({ error: e?.message ?? String(err?.message || err), hint: e?.hint, code: e?.code ?? 'failed' }), { mode: 0o600 });
+  } catch {}
+  console.error(`[browse] Failed to start: ${err?.message || err}`);
   process.exit(1);
 });

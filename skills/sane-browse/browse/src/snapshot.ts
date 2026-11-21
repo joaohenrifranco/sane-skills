@@ -17,10 +17,13 @@
  * Later: "click @e3" → look up Locator → locator.click()
  */
 
-import type { Page, Locator } from 'playwright';
+import type { Page, Frame, Locator } from 'playwright';
 import type { BrowserManager, RefEntry } from './browser-manager';
 import * as Diff from 'diff';
-import { TEMP_DIR, isPathWithin } from './platform';
+import type { BrowseConfig } from './config';
+import { resolveOutputPath, defaultOutput } from './paths';
+import { currentRequest } from './request-context';
+import { usage } from './errors';
 
 // Roles considered "interactive" for the -i flag
 const INTERACTIVE_ROLES = new Set([
@@ -62,7 +65,7 @@ export const SNAPSHOT_FLAGS: Array<{
   { short: '-s', long: '--selector', description: 'Scope to CSS selector', takesValue: true, valueHint: '<sel>', optionKey: 'selector' },
   { short: '-D', long: '--diff', description: 'Unified diff against previous snapshot (first call stores baseline)', optionKey: 'diff' },
   { short: '-a', long: '--annotate', description: 'Annotated screenshot with red overlay boxes and ref labels', optionKey: 'annotate' },
-  { short: '-o', long: '--output', description: 'Output path for annotated screenshot (default: <temp>/browse-annotated.png)', takesValue: true, valueHint: '<path>', optionKey: 'outputPath' },
+  { short: '-o', long: '--output', description: 'Output path for annotated screenshot (default: <temp>/sane-browse/<project>/annotated.png)', takesValue: true, valueHint: '<path>', optionKey: 'outputPath' },
   { short: '-C', long: '--cursor-interactive', description: 'Cursor-interactive elements (@c refs — divs with pointer, onclick)', optionKey: 'cursorInteractive' },
 ];
 
@@ -82,7 +85,7 @@ export function parseSnapshotArgs(args: string[]): SnapshotOptions {
   const opts: SnapshotOptions = {};
   for (let i = 0; i < args.length; i++) {
     const flag = SNAPSHOT_FLAGS.find(f => f.short === args[i] || f.long === args[i]);
-    if (!flag) throw new Error(`Unknown snapshot flag: ${args[i]}`);
+    if (!flag) throw usage(`Unknown snapshot flag: ${args[i]}`, `Flags: ${SNAPSHOT_FLAGS.map(f => f.short).join(' ')}`);
     if (flag.takesValue) {
       const value = args[++i];
       if (!value) throw new Error(`Usage: snapshot ${flag.short} <value>`);
@@ -132,17 +135,20 @@ function parseLine(line: string): ParsedNode | null {
  */
 export async function handleSnapshot(
   args: string[],
-  bm: BrowserManager
+  bm: BrowserManager,
+  config: BrowseConfig,
 ): Promise<string> {
   const opts = parseSnapshotArgs(args);
-  const page = bm.getPage();
+  if (opts.outputPath && !opts.annotate) throw usage('-o only applies with -a (annotated screenshot)');
+  const page = bm.getTarget();
+  const tabPage = bm.getPage();
 
   // Get accessibility tree via ariaSnapshot
   let rootLocator: Locator;
   if (opts.selector) {
     rootLocator = page.locator(opts.selector);
     const count = await rootLocator.count();
-    if (count === 0) throw new Error(`Selector not found: ${opts.selector}`);
+    if (count === 0) throw usage(`Selector not found: ${opts.selector}`);
   } else {
     rootLocator = page.locator('body');
   }
@@ -150,7 +156,7 @@ export async function handleSnapshot(
   const ariaText = await rootLocator.ariaSnapshot();
   if (!ariaText || ariaText.trim().length === 0) {
     bm.setRefMap(new Map());
-    return '(no accessible elements found)';
+    return '(no accessible elements found)' + framesNote(tabPage, page);
   }
 
   // Parse the ariaSnapshot output
@@ -261,7 +267,7 @@ export async function handleSnapshot(
           const parts: string[] = [];
           let current: Element | null = el;
           while (current && current !== document.documentElement) {
-            const parent = current.parentElement;
+            const parent: Element | null = current.parentElement;
             if (!parent) break;
             const siblings = [...parent.children];
             const index = siblings.indexOf(current) + 1;
@@ -301,21 +307,18 @@ export async function handleSnapshot(
   // Store ref map on BrowserManager
   bm.setRefMap(refMap);
 
+  const snapshotText = output.length === 0 ? '(no interactive elements found)' : output.join('\n');
+  const frames = framesNote(tabPage, page);
   if (output.length === 0) {
-    return '(no interactive elements found)';
+    bm.setLastSnapshot(snapshotText);
+    return snapshotText + frames;
   }
-
-  const snapshotText = output.join('\n');
 
   // ─── Annotated screenshot (-a) ────────────────────────────
   if (opts.annotate) {
-    const screenshotPath = opts.outputPath || `${TEMP_DIR}/browse-annotated.png`;
-    // Validate output path (consistent with screenshot/pdf/responsive)
-    const resolvedPath = require('path').resolve(screenshotPath);
-    const safeDirs = [TEMP_DIR, process.cwd()];
-    if (!safeDirs.some((dir: string) => isPathWithin(resolvedPath, dir))) {
-      throw new Error(`Path must be within: ${safeDirs.join(', ')}`);
-    }
+    const screenshotPath = opts.outputPath
+      ? resolveOutputPath(opts.outputPath, config, currentRequest().cwd)
+      : defaultOutput(config, 'annotated.png');
     try {
       // Inject overlay divs at each ref's bounding box
       const boxes: Array<{ ref: string; box: { x: number; y: number; width: number; height: number } }> = [];
@@ -330,12 +333,12 @@ export async function handleSnapshot(
         }
       }
 
-      await page.evaluate((boxes) => {
+      await tabPage.evaluate((boxes) => {
         for (const { ref, box } of boxes) {
           const overlay = document.createElement('div');
           overlay.className = '__browse_annotation__';
           overlay.style.cssText = `
-            position: absolute; top: ${box.y}px; left: ${box.x}px;
+            position: absolute; top: ${box.y + window.scrollY}px; left: ${box.x + window.scrollX}px;
             width: ${box.width}px; height: ${box.height}px;
             border: 2px solid red; background: rgba(255,0,0,0.1);
             pointer-events: none; z-index: 99999;
@@ -349,10 +352,10 @@ export async function handleSnapshot(
         }
       }, boxes);
 
-      await page.screenshot({ path: screenshotPath, fullPage: true });
+      await tabPage.screenshot({ path: screenshotPath, fullPage: true });
 
       // Always remove overlays
-      await page.evaluate(() => {
+      await tabPage.evaluate(() => {
         document.querySelectorAll('.__browse_annotation__').forEach(el => el.remove());
       });
 
@@ -361,7 +364,7 @@ export async function handleSnapshot(
     } catch {
       // Remove overlays even on screenshot failure
       try {
-        await page.evaluate(() => {
+        await tabPage.evaluate(() => {
           document.querySelectorAll('.__browse_annotation__').forEach(el => el.remove());
         });
       } catch {}
@@ -388,11 +391,28 @@ export async function handleSnapshot(
     }
 
     bm.setLastSnapshot(snapshotText);
-    return diffOutput.join('\n');
+    return diffOutput.join('\n') + frames;
   }
 
   // Store for future diffs
   bm.setLastSnapshot(snapshotText);
 
-  return output.join('\n');
+  return output.join('\n') + frames;
+}
+
+/** List child iframes so the agent knows content exists outside this tree. */
+function framesNote(tabPage: Page, current: Frame): string {
+  const main = tabPage.mainFrame();
+  const scope = current === main ? main : current;
+  const children = scope.childFrames().filter(f => !f.isDetached());
+  const lines: string[] = [];
+  if (current !== main) lines.push(`(inside frame ${current.name() || current.url()}; 'frame main' to go back)`);
+  if (children.length > 0) {
+    lines.push(`── iframes (content not shown above; enter with 'frame') ──`);
+    for (const f of children) {
+      const name = f.name();
+      lines.push(`  ${name ? `frame --name ${name}` : `frame --url ${f.url()}`}   ${f.url()}`);
+    }
+  }
+  return lines.length ? '\n\n' + lines.join('\n') : '';
 }

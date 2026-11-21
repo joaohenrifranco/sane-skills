@@ -7,7 +7,7 @@
  * No cookie values exposed anywhere.
  */
 
-export function getCookiePickerHTML(serverPort: number): string {
+export function getCookiePickerHTML(serverPort: number, token: string): string {
   const baseUrl = `http://127.0.0.1:${serverPort}`;
 
   return `<!DOCTYPE html>
@@ -290,6 +290,7 @@ export function getCookiePickerHTML(serverPort: number): string {
 <script>
 (function() {
   const BASE = '${baseUrl}';
+  const TOKEN = '${token}';
   let activeBrowser = null;
   let allDomains = [];
   let importedSet = {};  // domain → count
@@ -328,6 +329,8 @@ export function getCookiePickerHTML(serverPort: number): string {
 
   // ─── API ────────────────────────────────
   async function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers || {}, { 'X-Picker-Token': TOKEN });
     const res = await fetch(BASE + '/cookie-picker' + path, opts);
     const data = await res.json();
     if (!res.ok) {
@@ -356,7 +359,7 @@ export function getCookiePickerHTML(serverPort: number): string {
       // Render browser pills
       const browsers = browserData.browsers;
       if (browsers.length === 0) {
-        $sourceDomains.innerHTML = '<div class="imported-empty">No Chromium browsers detected</div>';
+        $sourceDomains.innerHTML = '<div class="imported-empty">No supported browsers detected</div>';
         return;
       }
 

@@ -14,7 +14,7 @@ with `gh skill install`.
 | `sane-plan` | 4.0.0 | Smallest-defensible-design planning with explicit boundaries and tradeoffs | `sane-code` (rules) |
 | `sane-debug` | 3.0.0 | Evidence-led root-cause investigation, minimal fix, and verification | — |
 | `sane-qa` | 2.0.0 | Risk-scoped browser QA with reproducible evidence and safe fix handoff | `sane-browse`, `sane-debug` |
-| `sane-browse` | 2.0.0 | Focused browser interaction and observable evidence collection | — |
+| `sane-browse` | 3.0.0 | Headless/headed browser evidence, user handoff, persistent sessions, cookie import | — |
 | `sane-benchmark` | 5.0.0 | Context-preserving runtime measurement, diagnosis, and comparison | `sane-browse`, `sane-debug` |
 
 Bundle-style install is recommended: `sane-qa`, `sane-benchmark`, and
@@ -50,11 +50,19 @@ Update installed skills later with `gh skill update` (or reinstall).
 
 ### Requirements of the browser skills
 
-`sane-browse`, `sane-qa`, and `sane-benchmark` drive a headless browser through
-a `$B` command supplied by the host project or environment. The browse runtime
-ships in `skills/sane-browse/browse/` (Bun + Playwright daemon); host projects
-install it and expose it as `$B`, or provide an equivalent runtime. The skills
-never assume a package manager, repository path, or installation command.
+`sane-browse`, `sane-qa`, and `sane-benchmark` drive a browser through `$B`,
+the launcher at `skills/sane-browse/browse/bin/browse`. It needs
+[Bun](https://bun.sh); on first run it installs its dependencies and
+Playwright's Chromium (~150MB) by itself, and `browse doctor` reports what is
+missing. State, logs and the per-project browser profile live in
+`~/.cache/sane-browse` (`BROWSE_HOME` overrides), never in your repository.
+
+Platforms: macOS and Linux (headed mode on a display-less Linux host uses
+Xvfb when installed). Cookie import reads Chrome, Chromium, Brave, Edge, Arc
+and Comet on macOS, and Firefox everywhere. Windows is untested.
+
+Tests: `cd skills/sane-browse/browse && bun install && bun test`
+(`BROWSE_TEST_HEADED=0` skips the tests that open a visible browser).
 
 ## Alternative installers
 

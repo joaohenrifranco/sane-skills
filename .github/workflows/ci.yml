@@ -12,3 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/vet.sh
+
+  browse:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skills/sane-browse/browse
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      # Headed/handoff tests run under Xvfb, which the browser starts itself.
+      - run: sudo apt-get install -y xvfb
+      - run: bun run typecheck
+      - run: bun test --timeout 90000

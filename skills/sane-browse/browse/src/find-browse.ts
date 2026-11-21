@@ -1,68 +1,32 @@
 /**
- * find-browse — locate the browse binary.
- *
- * Compiled to browse/dist/find-browse (standalone binary, no bun runtime needed).
- * Outputs the absolute path to the browse binary on stdout, or exits 1 if not found.
+ * find-browse — print the absolute path of the browse launcher.
+ * Looks for skills/sane-browse/browse/bin/browse in project-local, then
+ * user-global agent skill directories. Exits 1 if not found.
  */
 
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { homedir } from 'os';
-
-// ─── Binary Discovery ───────────────────────────────────────────
-
-function getGitRoot(): string | null {
-  try {
-    const proc = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    if (proc.exitCode !== 0) return null;
-    return proc.stdout.toString().trim();
-  } catch {
-    return null;
-  }
-}
+import { getGitRoot } from './config';
 
 export function locateBinary(): string | null {
+  const adjacent = resolve(import.meta.dir, '..', 'bin', 'browse');
+  if (existsSync(adjacent)) return adjacent;
   const root = getGitRoot();
-  const home = homedir();
-
-  // Project-local sane-browse runtime takes priority
-  if (root) {
-    const infraLocal = join(root, '.agents', 'skills', 'sane-browse', 'browse', 'dist', 'browse');
-    if (existsSync(infraLocal)) return infraLocal;
+  const markers = ['.agents', '.claude', '.codex'];
+  const bases = [...(root ? markers.map(m => join(root, m)) : []), ...markers.map(m => join(homedir(), m))];
+  for (const base of bases) {
+    const candidate = join(base, 'skills', 'sane-browse', 'browse', 'bin', 'browse');
+    if (existsSync(candidate)) return candidate;
   }
-
-  const markers = ['.codex', '.agents', '.claude'];
-
-  // Workspace-local takes priority (for development)
-  if (root) {
-    for (const m of markers) {
-      const local = join(root, m, 'skills', 'sane-browse', 'browse', 'dist', 'browse');
-      if (existsSync(local)) return local;
-    }
-  }
-
-  // Global fallback
-  for (const m of markers) {
-    const global = join(home, m, 'skills', 'sane-browse', 'browse', 'dist', 'browse');
-    if (existsSync(global)) return global;
-  }
-
   return null;
 }
 
-// ─── Main ───────────────────────────────────────────────────────
-
-function main() {
+if (import.meta.main) {
   const bin = locateBinary();
   if (!bin) {
-    process.stderr.write('ERROR: browse binary not found. Configure the sane-browse runtime before retrying.\n');
+    process.stderr.write('browse launcher not found. Install the sane-browse skill, then use <skill-dir>/browse/bin/browse.\n');
     process.exit(1);
   }
-
   console.log(bin);
 }
-
-main();

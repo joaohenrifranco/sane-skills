@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# sane-browse launcher: bootstraps on first run, then runs the CLI.
+#   1. resolve this script through symlinks to find the browse directory
+#   2. require a working bun (prints one install command if missing)
+#   3. install node_modules and Playwright's Chromium once
+#   4. exec the CLI with all arguments
+set -euo pipefail
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+BROWSE_DIR="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+if ! command -v bun >/dev/null 2>&1 || ! bun --version >/dev/null 2>&1; then
+  echo "sane-browse needs Bun (https://bun.sh). Install it with:" >&2
+  echo "  curl -fsSL https://bun.sh/install | bash" >&2
+  if command -v mise >/dev/null 2>&1; then
+    echo "or, with mise:  mise use -g bun@latest" >&2
+  fi
+  exit 2
+fi
+
+if [ ! -d "$BROWSE_DIR/node_modules/playwright" ]; then
+  echo "[browse] First run: installing dependencies..." >&2
+  (cd "$BROWSE_DIR" && bun install --frozen-lockfile --production >&2) || {
+    echo "[browse] bun install failed in $BROWSE_DIR" >&2; exit 1; }
+fi
+
+marker="$BROWSE_DIR/node_modules/.sane-browse-chromium"
+if [ ! -f "$marker" ] && [ "${BROWSE_SKIP_BROWSER_INSTALL:-}" != "1" ]; then
+  echo "[browse] First run: downloading Chromium (one time, ~150MB)..." >&2
+  if (cd "$BROWSE_DIR" && bunx playwright install chromium >&2); then
+    date > "$marker"
+  else
+    echo "[browse] Chromium download failed. Retry with: $BROWSE_DIR/bin/browse doctor --fix" >&2
+    if [ "$(uname -s)" = "Linux" ]; then
+      echo "[browse] On Linux you may also need system libraries: (cd $BROWSE_DIR && sudo bunx playwright install-deps chromium)" >&2
+    fi
+    exit 1
+  fi
+fi
+
+exec bun run "$BROWSE_DIR/src/cli.ts" "$@"

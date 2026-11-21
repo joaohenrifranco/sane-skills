@@ -7,10 +7,12 @@
 
 import type { BrowserManager } from './browser-manager';
 import { consoleBuffer, networkBuffer, dialogBuffer } from './buffers';
-import type { Page } from 'playwright';
+import type { Page, Frame } from 'playwright';
 import * as fs from 'fs';
-import * as path from 'path';
-import { TEMP_DIR, isPathWithin } from './platform';
+import { resolveInputPath } from './paths';
+import { currentRequest } from './request-context';
+import { usage } from './errors';
+import type { BrowseConfig } from './config';
 
 /** Detect await keyword, ignoring comments. Accepted risk: await in string literals triggers wrapping (harmless). */
 function hasAwait(code: string): boolean {
@@ -36,34 +38,16 @@ function wrapForEvaluate(code: string): string {
     : `(async()=>(${trimmed}))()`;
 }
 
-// Security: Path validation to prevent path traversal attacks
-const SAFE_DIRECTORIES = [TEMP_DIR, process.cwd()];
-
-export function validateReadPath(filePath: string): void {
-  if (path.isAbsolute(filePath)) {
-    const resolved = path.resolve(filePath);
-    const isSafe = SAFE_DIRECTORIES.some(dir => isPathWithin(resolved, dir));
-    if (!isSafe) {
-      throw new Error(`Absolute path must be within: ${SAFE_DIRECTORIES.join(', ')}`);
-    }
-  }
-  const normalized = path.normalize(filePath);
-  if (normalized.includes('..')) {
-    throw new Error('Path traversal sequences (..) are not allowed');
-  }
-}
-
 /**
- * Extract clean text from a page (strips script/style/noscript/svg).
- * Exported for DRY reuse in meta-commands (diff).
+ * Visible text of the page (or selected frame), one block per line.
+ * Reads the live document: innerText needs layout, which a detached clone
+ * lacks (that collapsed every paragraph onto one line).
  */
-export async function getCleanText(page: Page): Promise<string> {
-  return await page.evaluate(() => {
+export async function getCleanText(target: Page | Frame): Promise<string> {
+  return await target.evaluate(() => {
     const body = document.body;
     if (!body) return '';
-    const clone = body.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('script, style, noscript, svg').forEach(el => el.remove());
-    return clone.innerText
+    return body.innerText
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0)
@@ -74,9 +58,10 @@ export async function getCleanText(page: Page): Promise<string> {
 export async function handleReadCommand(
   command: string,
   args: string[],
-  bm: BrowserManager
+  bm: BrowserManager,
+  config: BrowseConfig,
 ): Promise<string> {
-  const page = bm.getPage();
+  const page = bm.getTarget();
 
   switch (command) {
     case 'text': {
@@ -142,7 +127,7 @@ export async function handleReadCommand(
 
     case 'js': {
       const expr = args[0];
-      if (!expr) throw new Error('Usage: browse js <expression>');
+      if (!expr) throw usage('Usage: browse js <expression>');
       const wrapped = wrapForEvaluate(expr);
       const result = await page.evaluate(wrapped);
       return typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result ?? '');
@@ -150,10 +135,8 @@ export async function handleReadCommand(
 
     case 'eval': {
       const filePath = args[0];
-      if (!filePath) throw new Error('Usage: browse eval <js-file>');
-      validateReadPath(filePath);
-      if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
-      const code = fs.readFileSync(filePath, 'utf-8');
+      if (!filePath) throw usage('Usage: browse eval <js-file>');
+      const code = fs.readFileSync(resolveInputPath(filePath, config, currentRequest().cwd), 'utf-8');
       const wrapped = wrapForEvaluate(code);
       const result = await page.evaluate(wrapped);
       return typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result ?? '');
@@ -161,7 +144,7 @@ export async function handleReadCommand(
 
     case 'css': {
       const [selector, property] = args;
-      if (!selector || !property) throw new Error('Usage: browse css <selector> <property>');
+      if (!selector || !property) throw usage('Usage: browse css <selector> <property>');
       const resolved = await bm.resolveRef(selector);
       if ('locator' in resolved) {
         const value = await resolved.locator.evaluate(
@@ -183,7 +166,7 @@ export async function handleReadCommand(
 
     case 'attrs': {
       const selector = args[0];
-      if (!selector) throw new Error('Usage: browse attrs <selector>');
+      if (!selector) throw usage('Usage: browse attrs <selector>');
       const resolved = await bm.resolveRef(selector);
       if ('locator' in resolved) {
         const attrs = await resolved.locator.evaluate((el) => {
@@ -246,7 +229,7 @@ export async function handleReadCommand(
     case 'is': {
       const property = args[0];
       const selector = args[1];
-      if (!property || !selector) throw new Error('Usage: browse is <property> <selector>\nProperties: visible, hidden, enabled, disabled, checked, editable, focused');
+      if (!property || !selector) throw usage('Usage: browse is <property> <selector>\nProperties: visible, hidden, enabled, disabled, checked, editable, focused');
 
       const resolved = await bm.resolveRef(selector);
       let locator;
@@ -270,13 +253,8 @@ export async function handleReadCommand(
           return String(isFocused);
         }
         default:
-          throw new Error(`Unknown property: ${property}. Use: visible, hidden, enabled, disabled, checked, editable, focused`);
+          throw usage(`Unknown property: ${property}. Use: visible, hidden, enabled, disabled, checked, editable, focused`);
       }
-    }
-
-    case 'cookies': {
-      const cookies = await page.context().cookies();
-      return JSON.stringify(cookies, null, 2);
     }
 
     case 'storage': {

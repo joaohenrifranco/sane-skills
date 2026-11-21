@@ -1,423 +1,367 @@
 /**
- * sane browse CLI — thin wrapper that talks to the persistent server
+ * browse CLI — thin client for the per-project browser server.
  *
- * Flow:
- *   1. Read .agents/.context/browse.json for port + token
- *   2. If missing or stale PID → start server in background
- *   3. Health check + version mismatch detection
- *   4. Send command via HTTP POST
- *   5. Print response to stdout (or stderr for errors)
+ *   browse [global options] <command> [args]
+ *
+ * Flow: resolve config + launch options → reuse the running server if its
+ * launch options match (or none were requested explicitly) → otherwise start
+ * one → POST the command → print the result, exit with the error's code.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveConfig, ensureStateDir, readVersionHash } from './config';
+import {
+  resolveConfig, ensureStateDir, resolveProfileDir, resolveProxy, describeLaunch,
+  type LaunchConfig, type BrowseConfig,
+} from './config';
+import { generateHelpText, LOCAL_COMMANDS } from './commands';
+import { SNAPSHOT_FLAGS } from './snapshot';
+import { EXIT_CODES, type ErrorCode } from './errors';
 
-const config = resolveConfig();
-const IS_WINDOWS = process.platform === 'win32';
-const MAX_START_WAIT = IS_WINDOWS ? 15000 : 8000; // Node+Chromium takes longer on Windows
-
-export function resolveServerScript(
-  env: Record<string, string | undefined> = process.env,
-  metaDir: string = import.meta.dir,
-  execPath: string = process.execPath
-): string {
-  if (env.BROWSE_SERVER_SCRIPT) {
-    return env.BROWSE_SERVER_SCRIPT;
-  }
-
-  // Dev mode: cli.ts runs directly from browse/src
-  // On macOS/Linux, import.meta.dir starts with /
-  // On Windows, it starts with a drive letter (e.g., C:\...)
-  if (!metaDir.includes('$bunfs')) {
-    const direct = path.resolve(metaDir, 'server.ts');
-    if (fs.existsSync(direct)) {
-      return direct;
-    }
-  }
-
-  // Compiled binary: derive the source tree from browse/dist/browse
-  if (execPath) {
-    const adjacent = path.resolve(path.dirname(execPath), '..', 'src', 'server.ts');
-    if (fs.existsSync(adjacent)) {
-      return adjacent;
-    }
-  }
-
-  throw new Error(
-    'Cannot find server.ts. Set BROWSE_SERVER_SCRIPT env or run from the browse source tree.'
-  );
-}
-
-const SERVER_SCRIPT = resolveServerScript();
-
-/**
- * On Windows, resolve the Node.js-compatible server bundle.
- * Falls back to null if not found (server will use Bun instead).
- */
-export function resolveNodeServerScript(
-  metaDir: string = import.meta.dir,
-  execPath: string = process.execPath
-): string | null {
-  // Dev mode
-  if (!metaDir.includes('$bunfs')) {
-    const distScript = path.resolve(metaDir, '..', 'dist', 'server-node.mjs');
-    if (fs.existsSync(distScript)) return distScript;
-  }
-
-  // Compiled binary: browse/dist/browse → browse/dist/server-node.mjs
-  if (execPath) {
-    const adjacent = path.resolve(path.dirname(execPath), 'server-node.mjs');
-    if (fs.existsSync(adjacent)) return adjacent;
-  }
-
-  return null;
-}
-
-const NODE_SERVER_SCRIPT = IS_WINDOWS ? resolveNodeServerScript() : null;
+const MAX_START_WAIT = process.platform === 'win32' ? 20000 : 15000;
+const DEFAULT_REQUEST_TIMEOUT = 90_000; // covers a 60s Keychain wait
+const SERVER_VERSION = '3';
 
 interface ServerState {
   pid: number;
   port: number;
   token: string;
-  startedAt: string;
-  serverPath: string;
-  binaryVersion?: string;
+  serverVersion?: string;
+  launch?: LaunchConfig;
 }
 
-// ─── State File ────────────────────────────────────────────────
-function readState(): ServerState | null {
+export interface GlobalOptions {
+  headed?: boolean;
+  profile?: string;
+  ephemeral?: boolean;
+  proxy?: string;
+  session?: string;
+  timeoutMs?: number;
+  json: boolean;
+  /** Launch fields set by a flag or env var; only these are checked against a running browser. */
+  explicit: { headed: boolean; profile: boolean; proxy: boolean };
+}
+
+const truthy = (v: string | undefined) => !!v && !['0', 'false', 'no', 'off', ''].includes(v.toLowerCase());
+
+export function parseGlobalOptions(argv: string[], env = process.env): { opts: GlobalOptions; rest: string[] } {
+  const opts: GlobalOptions = { json: false, explicit: { headed: false, profile: false, proxy: false } };
+  const rest = [...argv];
+  while (rest.length && rest[0].startsWith('--')) {
+    const flag = rest[0];
+    const needValue = () => {
+      const v = rest[1];
+      if (v === undefined) fail('usage', `${flag} needs a value`);
+      rest.splice(0, 2);
+      return v!;
+    };
+    if (flag === '--headed') { opts.headed = true; rest.shift(); }
+    else if (flag === '--headless') { opts.headed = false; rest.shift(); }
+    else if (flag === '--ephemeral') { opts.ephemeral = true; rest.shift(); }
+    else if (flag === '--json') { opts.json = true; rest.shift(); }
+    else if (flag === '--profile') opts.profile = needValue();
+    else if (flag === '--proxy') opts.proxy = needValue();
+    else if (flag === '--session') opts.session = needValue();
+    else if (flag === '--timeout') {
+      const v = Number(needValue());
+      if (!Number.isFinite(v) || v <= 0) fail('usage', '--timeout needs a positive number of milliseconds');
+      opts.timeoutMs = v;
+    }
+    else if (flag === '--help') { rest.splice(0, 1, 'help'); break; }
+    else break; // a command flag such as --version is not ours
+  }
+  if (opts.headed === undefined && env.BROWSE_HEADED !== undefined) opts.headed = truthy(env.BROWSE_HEADED);
+  if (opts.ephemeral === undefined && env.BROWSE_EPHEMERAL !== undefined) opts.ephemeral = truthy(env.BROWSE_EPHEMERAL);
+  if (opts.profile === undefined && env.BROWSE_PROFILE) opts.profile = env.BROWSE_PROFILE;
+  if (opts.session === undefined && env.BROWSE_SESSION) opts.session = env.BROWSE_SESSION;
+  if (opts.profile && opts.ephemeral) fail('usage', 'Use --profile or --ephemeral, not both');
+  opts.explicit = {
+    headed: opts.headed !== undefined,
+    profile: opts.ephemeral !== undefined || opts.profile !== undefined,
+    proxy: opts.proxy !== undefined || env.BROWSE_PROXY_URL !== undefined,
+  };
+  return { opts, rest };
+}
+
+export function launchFrom(opts: GlobalOptions, config: BrowseConfig, env = process.env): LaunchConfig {
+  const { proxy, bypass } = resolveProxy(opts.proxy, env);
+  return {
+    headed: !!opts.headed,
+    profileDir: resolveProfileDir(config, opts.profile, !!opts.ephemeral),
+    proxy,
+    proxyBypass: bypass,
+  };
+}
+
+let jsonMode = false;
+
+function fail(code: ErrorCode, message: string, hint?: string): never {
+  if (jsonMode) {
+    console.log(JSON.stringify({ ok: false, code, error: message, ...(hint ? { hint } : {}) }));
+  } else {
+    console.error(message);
+    if (hint) console.error(hint);
+  }
+  process.exit(EXIT_CODES[code]);
+}
+
+// ─── Server lifecycle ──────────────────────────────────────────
+
+function readState(config: BrowseConfig): ServerState | null {
+  try { return JSON.parse(fs.readFileSync(config.stateFile, 'utf-8')); } catch { return null; }
+}
+
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** 'healthy' | 'unhealthy' when /health answers, 'down' when it does not. */
+async function health(state: ServerState): Promise<'healthy' | 'unhealthy' | 'down'> {
   try {
-    const data = fs.readFileSync(config.stateFile, 'utf-8');
-    return JSON.parse(data);
+    const r = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return 'down';
+    return (await r.json() as any).status === 'healthy' ? 'healthy' : 'unhealthy';
   } catch {
-    return null;
+    return 'down';
   }
 }
+const healthy = async (state: ServerState) => (await health(state)) !== 'down';
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ─── Process Management ─────────────────────────────────────────
 async function killServer(pid: number): Promise<void> {
-  if (!isProcessAlive(pid)) return;
-
+  if (!isAlive(pid)) return;
   try { process.kill(pid, 'SIGTERM'); } catch { return; }
-
-  // Wait up to 2s for graceful shutdown
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline && isProcessAlive(pid)) {
-    await Bun.sleep(100);
-  }
-
-  // Force kill if still alive
-  if (isProcessAlive(pid)) {
-    try { process.kill(pid, 'SIGKILL'); } catch {}
-  }
+  const deadline = Date.now() + 7000;
+  while (Date.now() < deadline && isAlive(pid)) await Bun.sleep(100);
+  if (isAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
 }
 
-/**
- * Clean up legacy /tmp/browse-server*.json files from before project-local state.
- * Verifies PID ownership before sending signals.
- */
-function cleanupLegacyState(): void {
-  try {
-    const files = fs.readdirSync('/tmp').filter(f => f.startsWith('browse-server') && f.endsWith('.json'));
-    for (const file of files) {
-      const fullPath = `/tmp/${file}`;
-      try {
-        const data = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-        if (data.pid && isProcessAlive(data.pid)) {
-          // Verify this is actually a browse server before killing
-          const check = Bun.spawnSync(['ps', '-p', String(data.pid), '-o', 'command='], {
-            stdout: 'pipe', stderr: 'pipe', timeout: 2000,
-          });
-          const cmd = check.stdout.toString().trim();
-          if (cmd.includes('bun') || cmd.includes('server.ts')) {
-            try { process.kill(data.pid, 'SIGTERM'); } catch {}
-          }
-        }
-        fs.unlinkSync(fullPath);
-      } catch {
-        // Best effort — skip files we can't parse or clean up
-      }
-    }
-    // Clean up legacy log files too
-    const logFiles = fs.readdirSync('/tmp').filter(f =>
-      f.startsWith('browse-console') || f.startsWith('browse-network') || f.startsWith('browse-dialog')
-    );
-    for (const file of logFiles) {
-      try { fs.unlinkSync(`/tmp/${file}`); } catch {}
-    }
-  } catch {
-    // /tmp read failed — skip legacy cleanup
-  }
+function serverScript(): string {
+  if (process.env.BROWSE_SERVER_SCRIPT) return process.env.BROWSE_SERVER_SCRIPT;
+  const direct = path.resolve(import.meta.dir, 'server.ts');
+  if (fs.existsSync(direct)) return direct;
+  fail('failed', 'Cannot find server.ts next to the CLI. Set BROWSE_SERVER_SCRIPT or run from the browse source tree.');
 }
 
-// ─── Server Lifecycle ──────────────────────────────────────────
-async function startServer(): Promise<ServerState> {
+async function startServer(config: BrowseConfig, launch: LaunchConfig): Promise<ServerState> {
   ensureStateDir(config);
-
-  // Clean up stale state file
   try { fs.unlinkSync(config.stateFile); } catch {}
-
-  // Start server as detached background process.
-  // On Windows, Bun can't launch/connect to Playwright's Chromium (oven-sh/bun#4253, #9911).
-  // Fall back to running the server under Node.js with Bun API polyfills.
-  const useNode = IS_WINDOWS && NODE_SERVER_SCRIPT;
-  const serverCmd = useNode
-    ? ['node', NODE_SERVER_SCRIPT]
-    : ['bun', 'run', SERVER_SCRIPT];
-  const proc = Bun.spawn(serverCmd, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, BROWSE_STATE_FILE: config.stateFile },
+  const errFile = `${config.stateFile}.error`;
+  try { fs.unlinkSync(errFile); } catch {}
+  const logFd = fs.openSync(path.join(config.stateDir, 'server.log'), 'a', 0o600);
+  const proc = Bun.spawn(['bun', 'run', serverScript()], {
+    stdio: ['ignore', logFd, logFd],
+    env: { ...process.env, BROWSE_CONFIG: JSON.stringify(config), BROWSE_LAUNCH: JSON.stringify(launch) },
   });
-
-  // Don't hold the CLI open
   proc.unref();
+  fs.closeSync(logFd);
 
-  // Wait for state file to appear
   const start = Date.now();
   while (Date.now() - start < MAX_START_WAIT) {
-    const state = readState();
-    if (state && isProcessAlive(state.pid)) {
-      return state;
+    const state = readState(config);
+    if (state && isAlive(state.pid)) return state;
+    if (fs.existsSync(errFile)) {
+      const e = JSON.parse(fs.readFileSync(errFile, 'utf-8'));
+      fail(e.code || 'failed', `Browser failed to start: ${e.error}`, e.hint);
     }
+    if (proc.exitCode !== null) break;
     await Bun.sleep(100);
   }
-
-  // If we get here, server didn't start in time
-  // Try to read stderr for error message
-  const stderr = proc.stderr;
-  if (stderr) {
-    const reader = stderr.getReader();
-    const { value } = await reader.read();
-    if (value) {
-      const errText = new TextDecoder().decode(value);
-      throw new Error(`Server failed to start:\n${errText}`);
-    }
-  }
-  throw new Error(`Server failed to start within ${MAX_START_WAIT / 1000}s`);
+  fail('failed', `Browser server did not start within ${MAX_START_WAIT / 1000}s.`, `See ${path.join(config.stateDir, 'server.log')}`);
 }
 
-/**
- * Acquire an exclusive lockfile to prevent concurrent ensureServer() races (TOCTOU).
- * Returns a cleanup function that releases the lock.
- */
-function acquireServerLock(): (() => void) | null {
+function acquireLock(config: BrowseConfig): (() => void) | null {
   const lockPath = `${config.stateFile}.lock`;
   try {
-    // O_CREAT | O_EXCL — fails if file already exists (atomic check-and-create)
-    const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+    const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
     fs.writeSync(fd, `${process.pid}\n`);
     fs.closeSync(fd);
     return () => { try { fs.unlinkSync(lockPath); } catch {} };
   } catch {
-    // Lock already held — check if the holder is still alive
     try {
-      const holderPid = parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
-      if (holderPid && isProcessAlive(holderPid)) {
-        return null; // Another live process holds the lock
-      }
-      // Stale lock — remove and retry
+      const holder = parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
+      if (holder && isAlive(holder)) return null;
       fs.unlinkSync(lockPath);
-      return acquireServerLock();
+      return acquireLock(config);
     } catch {
       return null;
     }
   }
 }
 
-async function ensureServer(): Promise<ServerState> {
-  const state = readState();
+function conflicts(running: LaunchConfig, wanted: LaunchConfig, explicit: GlobalOptions['explicit']): boolean {
+  return (explicit.headed && running.headed !== wanted.headed)
+    || (explicit.profile && running.profileDir !== wanted.profileDir)
+    || (explicit.proxy && (running.proxy !== wanted.proxy || running.proxyBypass !== wanted.proxyBypass));
+}
 
-  if (state && isProcessAlive(state.pid)) {
-    // Check for binary version mismatch (auto-restart on update)
-    const currentVersion = readVersionHash();
-    if (currentVersion && state.binaryVersion && currentVersion !== state.binaryVersion) {
-      console.error('[browse] Binary updated, restarting server...');
+async function ensureServer(config: BrowseConfig, launch: LaunchConfig, explicit: GlobalOptions['explicit']): Promise<ServerState> {
+  const state = readState(config);
+  if (state && isAlive(state.pid)) {
+    if (state.serverVersion !== SERVER_VERSION) {
+      console.error('[browse] Browser server is from another version; restarting it...');
       await killServer(state.pid);
-      return startServer();
-    }
-
-    // Server appears alive — do a health check
-    try {
-      const resp = await fetch(`http://127.0.0.1:${state.port}/health`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (resp.ok) {
-        const health = await resp.json() as any;
-        if (health.status === 'healthy') {
-          return state;
-        }
-      }
-    } catch {
-      // Health check failed — server is dead or unhealthy
+    } else if (state.launch && conflicts(state.launch, launch, explicit)) {
+      fail('usage',
+        `The running browser uses: ${describeLaunch(state.launch)}\nThis call asks for: ${describeLaunch(launch)}`,
+        "Run 'browse stop' first, or drop the conflicting options. (The running browser keeps its tabs and cookies until stopped.)");
+    } else {
+      // Never kill a live server on our own: it may hold a handoff or tabs.
+      if (await healthy(state)) return state;
+      fail('failed', `The browser server (pid ${state.pid}) is running but not responding.`,
+        "Run 'browse stop' to end it (tabs are lost; the profile keeps cookies), then retry.");
     }
   }
 
-  // Ensure state directory exists before acquiring the lock
   ensureStateDir(config);
-
-  // Acquire lock to prevent concurrent restart races (TOCTOU)
-  const releaseLock = acquireServerLock();
-  if (!releaseLock) {
-    // Another process is starting the server — wait for it
-    console.error('[browse] Another instance is starting the server, waiting...');
+  const release = acquireLock(config);
+  if (!release) {
     const start = Date.now();
     while (Date.now() - start < MAX_START_WAIT) {
-      const freshState = readState();
-      if (freshState && isProcessAlive(freshState.pid)) return freshState;
+      const fresh = readState(config);
+      if (fresh && isAlive(fresh.pid) && await healthy(fresh)) return fresh;
       await Bun.sleep(200);
     }
-    throw new Error('Timed out waiting for another instance to start the server');
+    fail('failed', 'Timed out waiting for another browse call to start the browser.');
   }
-
   try {
-    // Re-read state under lock in case another process just started the server
-    const freshState = readState();
-    if (freshState && isProcessAlive(freshState.pid)) {
-      return freshState;
-    }
-
-    // Kill the old server to avoid orphaned chromium processes
-    if (state && state.pid) {
-      await killServer(state.pid);
-    }
-    console.error('[browse] Starting server...');
-    return await startServer();
+    const fresh = readState(config);
+    if (fresh && isAlive(fresh.pid) && await healthy(fresh)) return fresh;
+    if (fresh?.pid) await killServer(fresh.pid);
+    else if (state?.pid) await killServer(state.pid);
+    console.error(`[browse] Starting browser (${describeLaunch(launch)})...`);
+    return await startServer(config, launch);
   } finally {
-    releaseLock();
+    release();
   }
 }
 
-// ─── Command Dispatch ──────────────────────────────────────────
-async function sendCommand(state: ServerState, command: string, args: string[], retries = 0): Promise<void> {
-  const body = JSON.stringify({ command, args });
+// ─── Command dispatch ──────────────────────────────────────────
 
+function requestTimeout(command: string, args: string[], opts: GlobalOptions): number {
+  if (opts.timeoutMs) return opts.timeoutMs + 15_000;
+  if (command === 'handoff' && args.includes('--until')) return 600_000 + 15_000;
+  if (command === 'wait' && args[1] && /^\d+$/.test(args[1])) return parseInt(args[1], 10) + 15_000;
+  return DEFAULT_REQUEST_TIMEOUT;
+}
+
+async function sendCommand(state: ServerState, command: string, args: string[], opts: GlobalOptions): Promise<void> {
+  const timeout = requestTimeout(command, args, opts);
+  let resp: Response;
   try {
-    const resp = await fetch(`http://127.0.0.1:${state.port}/command`, {
+    resp = await fetch(`http://127.0.0.1:${state.port}/command`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.token}`,
-      },
-      body,
-      signal: AbortSignal.timeout(30000),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+      body: JSON.stringify({ command, args, cwd: process.cwd(), session: opts.session, timeoutMs: opts.timeoutMs }),
+      signal: AbortSignal.timeout(timeout),
     });
-
-    if (resp.status === 401) {
-      // Token mismatch — server may have restarted
-      console.error('[browse] Auth failed — server may have restarted. Retrying...');
-      const newState = readState();
-      if (newState && newState.token !== state.token) {
-        return sendCommand(newState, command, args);
-      }
-      throw new Error('Authentication failed');
-    }
-
-    const text = await resp.text();
-
-    if (resp.ok) {
-      process.stdout.write(text);
-      if (!text.endsWith('\n')) process.stdout.write('\n');
-    } else {
-      // Try to parse as JSON error
-      try {
-        const err = JSON.parse(text);
-        console.error(err.error || text);
-        if (err.hint) console.error(err.hint);
-      } catch {
-        console.error(text);
-      }
-      process.exit(1);
-    }
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.error('[browse] Command timed out after 30s');
-      process.exit(1);
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      fail('failed', `No reply from the browser after ${Math.round(timeout / 1000)}s.`, 'Pass --timeout <ms> for long operations.');
     }
-    // Connection error — server may have crashed
-    if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.message?.includes('fetch failed')) {
-      if (retries >= 1) throw new Error('[browse] Server crashed twice in a row — aborting');
-      console.error('[browse] Server connection lost. Restarting...');
-      // Kill the old server to avoid orphaned chromium processes
-      const oldState = readState();
-      if (oldState && oldState.pid) {
-        await killServer(oldState.pid);
-      }
-      const newState = await startServer();
-      return sendCommand(newState, command, args, retries + 1);
-    }
-    throw err;
+    fail('failed', `Lost connection to the browser server: ${err?.message || err}`, 'Run the command again; the server restarts automatically.');
   }
+
+  const text = await resp.text();
+  if (resp.ok) {
+    if (opts.json) console.log(JSON.stringify({ ok: true, command, output: text }));
+    else process.stdout.write(text.endsWith('\n') ? text : text + '\n');
+    return;
+  }
+  let err: { error?: string; hint?: string; code?: ErrorCode } = {};
+  try { err = JSON.parse(text); } catch { err = { error: text }; }
+  fail(err.code && err.code in EXIT_CODES ? err.code : 'failed', err.error || `HTTP ${resp.status}`, err.hint);
+}
+
+// ─── Local commands ────────────────────────────────────────────
+
+async function doctor(config: BrowseConfig, launch: LaunchConfig, fix: boolean): Promise<void> {
+  const lines: string[] = [];
+  let ok = true;
+  lines.push(`bun        ${Bun.version}`);
+  let pw: typeof import('playwright') | null = null;
+  try { pw = await import('playwright'); } catch {}
+  if (!pw) { ok = false; lines.push('playwright MISSING (run: bun install in the browse directory)'); }
+  else {
+    let exe = '';
+    try { exe = pw.chromium.executablePath(); } catch {}
+    const has = !!exe && fs.existsSync(exe);
+    if (!has && fix) {
+      console.error('[browse] Installing Chromium (one time, ~150MB)...');
+      const p = Bun.spawnSync(['bunx', 'playwright', 'install', 'chromium'], { cwd: path.resolve(import.meta.dir, '..'), stdout: 'inherit', stderr: 'inherit' });
+      if (p.exitCode !== 0) ok = false;
+    }
+    const nowHas = !!exe && fs.existsSync(exe);
+    if (!nowHas) ok = false;
+    lines.push(`chromium   ${nowHas ? exe : 'MISSING (run: browse doctor --fix)'}`);
+  }
+  lines.push(`project    ${config.projectDir}`);
+  lines.push(`state      ${config.stateDir}`);
+  lines.push(`profile    ${launch.profileDir ?? '(ephemeral)'}`);
+  lines.push(`output     ${config.outputDir}`);
+  if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    const x = Bun.spawnSync(['sh', '-c', 'command -v Xvfb'], { stdout: 'pipe' }).exitCode === 0;
+    lines.push(`display    none; headed mode ${x ? 'will use Xvfb' : 'unavailable (install xvfb)'}`);
+  }
+  try {
+    const { listSources, blockedSources, BLOCKED_HINT } = await import('./cookie-import-browser');
+    const sources = listSources();
+    lines.push(`cookies    ${sources.length ? sources.map(s => `${s.browser}:"${s.profile}"`).join(', ') : 'no importable browser profiles found'}`);
+    for (const b of blockedSources()) lines.push(`           blocked: ${b}. ${BLOCKED_HINT}`);
+  } catch (err: any) {
+    lines.push(`cookies    could not scan (${err?.message})`);
+  }
+  const state = readState(config);
+  lines.push(`server     ${state && isAlive(state.pid) ? `running (pid ${state.pid}, ${state.launch ? describeLaunch(state.launch) : 'unknown launch'})` : 'not running'}`);
+  console.log(lines.join('\n'));
+  process.exit(ok ? 0 : 1);
 }
 
 // ─── Main ──────────────────────────────────────────────────────
-async function main() {
-  const args = process.argv.slice(2);
 
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
-    console.log(`sane browse — Fast headless browser for AI coding agents
+async function main(): Promise<void> {
+  const { opts, rest } = parseGlobalOptions(process.argv.slice(2));
+  jsonMode = opts.json;
+  const command = rest[0] ?? 'help';
+  const args = rest.slice(1);
+  const config = resolveConfig();
+  let launch: LaunchConfig;
+  try { launch = launchFrom(opts, config); } catch (err: any) { fail('usage', err.message); }
 
-Usage: browse <command> [args...]
+  if (command === 'help' || command === '-h') {
+    console.log(generateHelpText(SNAPSHOT_FLAGS));
+    return;
+  }
+  if (command === 'doctor') return doctor(config, launch, args.includes('--fix'));
+  if (LOCAL_COMMANDS.has(command)) return;
 
-Navigation:     goto <url> | back | forward | reload | url
-Content:        text | html [sel] | links | forms | accessibility
-Interaction:    click <sel> | fill <sel> <val> | select <sel> <val>
-                hover <sel> | type <text> | press <key>
-                scroll [sel] | wait <sel|--networkidle|--load> | viewport <WxH>
-                upload <sel> <file1> [file2...]
-                cookie-import <json-file>
-                cookie-import-browser [browser] [--domain <d>]
-Inspection:     js <expr> | eval <file> | css <sel> <prop> | attrs <sel>
-                console [--clear|--errors] | network [--clear] | dialog [--clear]
-                cookies | storage [set <k> <v>] | perf
-                is <prop> <sel> (visible|hidden|enabled|disabled|checked|editable|focused)
-Visual:         screenshot [--viewport] [--clip x,y,w,h] [@ref|sel] [path]
-                pdf [path] | responsive [prefix]
-Snapshot:       snapshot [-i] [-c] [-d N] [-s sel] [-D] [-a] [-o path] [-C]
-                -D/--diff: diff against previous snapshot
-                -a/--annotate: annotated screenshot with ref labels
-                -C/--cursor-interactive: find non-ARIA clickable elements
-Compare:        diff <url1> <url2>
-Multi-step:     chain (reads JSON from stdin)
-Tabs:           tabs | tab <id> | newtab [url] | closetab [id]
-Server:         status | cookie <n>=<v> | header <n>:<v>
-                useragent <str> | stop | restart
-Dialogs:        dialog-accept [text] | dialog-dismiss
-
-Refs:           After 'snapshot', use @e1, @e2... as selectors:
-                click @e3 | fill @e4 "value" | hover @e1
-                @c refs from -C: click @c1`);
-    process.exit(0);
+  if (command === 'stop') {
+    const state = readState(config);
+    if (!state || !isAlive(state.pid)) {
+      if (opts.json) console.log(JSON.stringify({ ok: true, command, output: 'No browser running' }));
+      else console.log('No browser running');
+      return;
+    }
+    // Short request; a hung server is terminated by signal instead.
+    await fetch(`http://127.0.0.1:${state.port}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+      body: JSON.stringify({ command: 'stop', args: [], cwd: process.cwd() }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline && isAlive(state.pid)) await Bun.sleep(100);
+    if (isAlive(state.pid)) await killServer(state.pid);
+    if (opts.json) console.log(JSON.stringify({ ok: true, command, output: 'Server stopped' }));
+    else console.log('Server stopped');
+    return;
   }
 
-  // One-time cleanup of legacy /tmp state files
-  cleanupLegacyState();
+  if (command === 'chain' && args.length === 0) args.push((await Bun.stdin.text()).trim());
 
-  const command = args[0];
-  const commandArgs = args.slice(1);
-
-  // Special case: chain reads from stdin
-  if (command === 'chain' && commandArgs.length === 0) {
-    const stdin = await Bun.stdin.text();
-    commandArgs.push(stdin.trim());
-  }
-
-  const state = await ensureServer();
-  await sendCommand(state, command, commandArgs);
+  const state = await ensureServer(config, launch, opts.explicit);
+  await sendCommand(state, command, args, opts);
 }
 
 if (import.meta.main) {
-  main().catch((err) => {
-    console.error(`[browse] ${err.message}`);
-    process.exit(1);
-  });
+  main().catch((err) => fail('failed', `[browse] ${err?.message || err}`));
 }

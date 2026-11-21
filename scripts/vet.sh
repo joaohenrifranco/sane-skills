@@ -82,6 +82,32 @@ else
   pass "no inline \$B eval misuse"
 fi
 
+# 6b. Every `$B <command>` documented in a skill exists in the browse registry
+REGISTRY=skills/sane-browse/browse/src/commands.ts
+if [ -f "$REGISTRY" ]; then
+  KNOWN=$( (grep -oE "^  '[a-z-]+':" "$REGISTRY" | tr -d "': "; echo doctor; echo help) | sort -u)
+  UNKNOWN=""
+  for f in "${SKILLS[@]}"; do
+    # First non-option word after $B; value-taking global options consume one word.
+    for cmd in $(grep -oE '\$B [^`|;&)]*' "$f" | awk '{
+        i = 2
+        while (i <= NF) {
+          if ($i ~ /^--(profile|proxy|session|timeout)$/) { i += 2; continue }
+          if ($i ~ /^--/) { i++; continue }
+          break
+        }
+        if (i <= NF && $i ~ /^[a-z][a-z-]*$/) print $i
+      }' | sort -u); do
+      if ! printf '%s\n' "$KNOWN" | grep -qx "$cmd"; then UNKNOWN="$UNKNOWN $f:$cmd"; fi
+    done
+  done
+  if [ -n "$UNKNOWN" ]; then
+    fail "documented \$B commands missing from the browse registry:$UNKNOWN"
+  else
+    pass "documented \$B commands exist in the browse registry"
+  fi
+fi
+
 # 7. README version table matches SKILL.md frontmatter
 VERSYNC=0
 for f in "${SKILLS[@]}"; do

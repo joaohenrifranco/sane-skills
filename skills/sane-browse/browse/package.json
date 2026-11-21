@@ -1,8 +1,18 @@
 {
   "name": "sane-browse-daemon",
   "private": true,
+  "type": "module",
+  "bin": { "browse": "bin/browse" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout 60000"
+  },
   "dependencies": {
     "diff": "^8.0.4",
     "playwright": "^1.58.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
   }
 }
