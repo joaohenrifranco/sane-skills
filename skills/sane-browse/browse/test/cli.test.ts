@@ -82,6 +82,14 @@ describe('reading, frames, errors, exit codes', () => {
     expect(JSON.parse(bad.out)).toMatchObject({ ok: false, code: 'failed' });
   });
 
+  test('eval reads sibling skill scripts from the installed skills directory', async () => {
+    const script = path.resolve(import.meta.dir, '..', '..', '..', 'sane-benchmark', 'scripts', 'navigation-timing.js');
+    const r = await sb.run(['eval', script]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('navigation');
+    expect((await sb.run(['eval', '/etc/hosts'])).code).toBe(2);
+  });
+
   test('stealth basics: webdriver false, no Headless in UA or brands', async () => {
     const r = await sb.run(['js', 'JSON.stringify([navigator.webdriver, navigator.userAgent, navigator.userAgentData?.brands?.map(b=>b.brand)])']);
     const [webdriver, ua, brands] = JSON.parse(r.out);

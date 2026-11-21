@@ -1,17 +1,17 @@
 ---
 name: sane-browse
-version: 3.0.0
+version: 7.0.0
 description: |
   Browser evidence collection for live pages: navigate, inspect, interact,
   capture screenshots, and verify observable outcomes, headless or headed.
   Hands off to the user for CAPTCHAs, MFA and logins, and keeps sessions in
   a per-project profile. Use when a task needs browser evidence. For systematic QA
-  coverage, use /sane-qa instead.
+  coverage, use `sane-qa` instead.
 ---
 
 # sane-browse — Browser Evidence
 
-## Setup
+## [SANE-BROWSE-SETUP] Setup
 
 `$B` is the launcher inside this skill: `<this skill's directory>/browse/bin/browse`.
 
@@ -30,7 +30,10 @@ browser profile live under `~/.cache/sane-browse` (override with
 Each project gets one browser server and one persistent profile, so
 cookies and logins survive restarts. Calls from the same project share it.
 
-## Scope
+Screenshot and artifact paths below use `.local/`; substitute the project's
+gitignored artifact directory when it differs.
+
+## [SANE-BROWSE-SCOPE] Scope
 
 Start from the user's claim or a concrete behavior to verify. Default to the
 smallest flow that can produce decisive evidence: one page, one action, one
@@ -42,7 +45,7 @@ Record the target URL and relevant context such as viewport, authentication
 state, and test data. Never report a browser state, error, or successful
 outcome that was not observed.
 
-## Choosing a mode
+## [SANE-BROWSE-MODE] Choosing a mode
 
 | Situation | Use |
 |---|---|
@@ -58,7 +61,7 @@ Launch options (`--headed`, `--profile`, `--ephemeral`, `--proxy`) apply when
 the browser starts. If a browser is already running with different options,
 the call exits 2 and says so; run `$B stop` first.
 
-## Exit codes
+## [SANE-BROWSE-EXIT] Exit codes
 
 | Code | Meaning | What to do |
 |---|---|---|
@@ -71,7 +74,7 @@ Add `--json` to get `{"ok":true,"output":...}` or `{"ok":false,"code":...,"error
 
 ## Evidence workflow
 
-### 1. Orient
+### [SANE-BROWSE-ORIENT] Orient
 
 ```bash
 $B goto <url>
@@ -90,7 +93,7 @@ and return with `$B frame main`. `$B snapshot -C` adds cursor/onclick
 elements as `@c` refs; that is evidence of the rendered page, not proof the
 control is accessible.
 
-### 2. Establish a baseline and perform one action
+### [SANE-BROWSE-ACT] Establish a baseline and perform one action
 
 ```bash
 $B snapshot
@@ -114,7 +117,7 @@ $B js "document.body.innerText.includes('Saved')"
 `is` supports `visible`, `hidden`, `enabled`, `disabled`, `checked`,
 `editable` and `focused`.
 
-### 3. Collect corroborating evidence
+### [SANE-BROWSE-CORROBORATE] Collect corroborating evidence
 
 ```bash
 $B console --errors
@@ -136,12 +139,14 @@ $B device "iPhone 15" && $B reload && $B screenshot .local/mobile.png
 ```
 
 Output paths must be inside the project, the current directory, the temp
-directory or `~/.cache/sane-browse`; parent folders are created. Open the
+directory or `~/.cache/sane-browse`; parent folders are created. `eval <file>`
+also reads scripts from the installed skills directory (for example
+`sane-benchmark`'s `scripts/`). Open the
 PNG with the host's file-reading tool so the user sees it. A screenshot
 shows appearance, not causality; pair it with state, console or network
 evidence for causal claims.
 
-### 4. Report what was observed
+### [SANE-BROWSE-REPORT] Report what was observed
 
 Report:
 
@@ -154,7 +159,7 @@ Report:
 Separate observation from inference. If the evidence is insufficient, say
 what single next observation would discriminate between the explanations.
 
-## User handoff
+## [SANE-BROWSE-HANDOFF] User handoff
 
 Hand off when progress needs a human: CAPTCHA, MFA, an OAuth approval, a
 password the agent must not type, or after repeated failures that look like
@@ -183,7 +188,7 @@ a form POST reloads as GET (the output warns). Re-orient from the resume
 snapshot; do not assume what the user changed. Never ask the user to share
 a password or code with you instead.
 
-## Sessions and cookies
+## [SANE-BROWSE-SESSIONS] Sessions and cookies
 
 The default profile keeps cookies, including session cookies, across
 restarts, in `~/.cache/sane-browse/profiles/<project>` (never the repo). To
@@ -198,7 +203,7 @@ $B state load before-test
 $B purge --yes                           # delete this project's profile, cookies, logs, states
 ```
 
-### Copying the user's browser cookies (unsafe, last resort)
+### [SANE-BROWSE-COOKIE-COPY] Copying the user's browser cookies (unsafe, last resort)
 
 Copying cookies out of the user's Chrome, Brave, Edge, Arc or Firefox hands
 the agent their real, signed-in sessions. It is off by default. Use it only

@@ -63,9 +63,14 @@ export function defaultOutput(config: BrowseConfig, name: string): string {
   return path.join(config.outputDir, name);
 }
 
-/** Resolve an input path that must exist. */
+/** The installed skills directory (…/skills), so sibling skills' scripts can be read. */
+const SKILLS_ROOT = realish(path.resolve(import.meta.dir, '..', '..', '..'));
+
+/** Resolve an input path that must exist. Reads may also come from the installed skills directory. */
 export function resolveInputPath(p: string, config: BrowseConfig, cwd: string): string {
-  const real = resolveUserPath(p, config, cwd);
+  const expanded = p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
+  const abs = realish(path.isAbsolute(expanded) ? expanded : path.resolve(cwd, expanded));
+  const real = within(abs, SKILLS_ROOT) ? abs : resolveUserPath(p, config, cwd);
   if (!fs.existsSync(real)) throw usage(`File not found: ${p}`);
   return real;
 }
