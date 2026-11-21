@@ -236,8 +236,21 @@ function hostMatchSql(column: string, domains: string[]): { sql: string; params:
 
 // ─── DB access (always from a private copy) ────────────────────
 
+/** Remove temp DB copies left by a process that was killed mid-read. */
+function sweepStaleCopies(tmp: string): void {
+  try {
+    for (const name of fs.readdirSync(tmp)) {
+      if (!name.startsWith('sane-browse-cookies-')) continue;
+      const p = path.join(tmp, name);
+      if (Date.now() - fs.statSync(p).mtimeMs > 10 * 60_000) fs.rmSync(p, { recursive: true, force: true });
+    }
+  } catch {}
+}
+
 function withDbCopy<T>(src: CookieSource, fn: (db: Database) => T): T {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sane-browse-cookies-'));
+  const tmp = fs.realpathSync(os.tmpdir());
+  sweepStaleCopies(tmp);
+  const dir = fs.mkdtempSync(path.join(tmp, 'sane-browse-cookies-'));
   const copy = path.join(dir, 'cookies.db');
   try {
     try {

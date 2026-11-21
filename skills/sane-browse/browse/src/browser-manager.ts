@@ -116,6 +116,9 @@ export class BrowserManager {
   private handoffState: HandoffState = this.freshHandoff();
 
   public serverPort = 0;
+  /** Where copied-cookie keys are tracked so a crash cannot leave them behind. */
+  public importManifest: string | null = null;
+  private imported = new Map<string, { name: string; domain: string; path: string }>();
 
   private dialogAutoAccept = true;
   private dialogPromptText: string | null = null;
@@ -132,7 +135,48 @@ export class BrowserManager {
   async launch(): Promise<void> {
     await this.openContext(this.cfg.headed ? 'headed' : 'headless');
     await this.restoreSessionCookies();
+    await this.removeLeftoverImports();
     await this.restoreState({ tabs: [], sessions: [] });
+  }
+
+  // ─── Copied (imported) cookies: temporary by default ─────
+
+  async trackImported(cookies: Array<{ name: string; domain: string; path: string }>): Promise<void> {
+    for (const c of cookies) this.imported.set(`${c.name}|${c.domain}|${c.path}`, { name: c.name, domain: c.domain, path: c.path });
+    this.writeImportManifest();
+  }
+
+  private writeImportManifest(): void {
+    if (!this.importManifest) return;
+    try {
+      if (this.imported.size === 0) { fs.rmSync(this.importManifest, { force: true }); return; }
+      fs.writeFileSync(this.importManifest, JSON.stringify([...this.imported.values()]), { mode: 0o600 });
+      fs.chmodSync(this.importManifest, 0o600);
+    } catch {}
+  }
+
+  /** Remove every tracked copied cookie from the browser. Returns how many were tracked. */
+  async forgetImported(): Promise<number> {
+    const n = this.imported.size;
+    if (this.context) {
+      for (const c of this.imported.values()) {
+        await this.context.clearCookies({ name: c.name, domain: c.domain, path: c.path }).catch(() => {});
+      }
+    }
+    this.imported.clear();
+    this.writeImportManifest();
+    return n;
+  }
+
+  /** After a crash the manifest survives; remove what it lists before anything else runs. */
+  private async removeLeftoverImports(): Promise<void> {
+    if (!this.importManifest || !fs.existsSync(this.importManifest)) return;
+    try {
+      const keys = JSON.parse(fs.readFileSync(this.importManifest, 'utf-8'));
+      if (Array.isArray(keys)) for (const k of keys) this.imported.set(`${k.name}|${k.domain}|${k.path}`, k);
+    } catch {}
+    const n = await this.forgetImported();
+    if (n) console.log(`[browse] Removed ${n} copied cookie(s) left over from an earlier run.`);
   }
 
   // Chromium drops cookies without an expiry when the browser exits, even
@@ -232,6 +276,7 @@ export class BrowserManager {
 
   async close(): Promise<void> {
     if (this.handoffState.storageTimer) clearInterval(this.handoffState.storageTimer);
+    await this.forgetImported();
     await this.closeContext();
   }
 

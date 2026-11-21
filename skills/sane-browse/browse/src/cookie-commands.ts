@@ -3,12 +3,18 @@
  *
  *   cookies [--domain d] [--values]          list cookies (values redacted by default)
  *   cookies sources [browser]                detected browsers and profiles
- *   cookies import [browser] --domain d [--domain d2] [--profile P] [--verify-auth <sel>[=<text>]]
- *   cookies clear [--domain d]               remove cookies from this browser
- *   cookies picker                           open the interactive picker in the user's browser
+ *   cookies import [browser] --domain d --unsafe-copy-browser-cookies
+ *                  [--profile P] [--persist] [--verify-auth <sel>[=<text>]]
+ *   cookies clear [--domain d | --imported]  remove cookies from this browser
+ *   cookies picker --unsafe-copy-browser-cookies
  *
- * Imported cookies go into the current context. With a persistent profile
- * (the default) that means they are on disk and survive restarts.
+ * Copying the user's real sessions is deliberately discouraged: it needs the
+ * --unsafe-copy-browser-cookies flag, prints a warning, and by default the
+ * copied cookies are temporary: removed when the browser stops, or on the
+ * next start after a crash (tracked by name/domain in a manifest, never by
+ * value). --persist keeps them in the project profile until they expire.
+ * The safe way to get a signed-in session is `handoff`: the user signs in
+ * once and the profile keeps it.
  */
 
 import type { BrowserManager } from './browser-manager';
@@ -38,6 +44,17 @@ function takeBool(args: string[], name: string): boolean {
   if (i === -1) return false;
   args.splice(i, 1);
   return true;
+}
+
+export const UNSAFE_FLAG = '--unsafe-copy-browser-cookies';
+
+function requireUnsafe(args: string[], what: string): void {
+  if (takeBool(args, UNSAFE_FLAG)) return;
+  throw usage(
+    `${what} copies the user's real signed-in sessions out of their browser, so it is off by default.`,
+    `Safer: handoff "Sign in to <site>" --until url:<after-login page>  (the user signs in once; the profile keeps it).\n`
+    + `Only if the user explicitly asked to copy their cookies: add ${UNSAFE_FLAG}`,
+  );
 }
 
 const describe = (s: CookieSource) => `${s.browserName} profile "${s.profile}"${s.profileLabel !== s.profile ? ` (${s.profileLabel})` : ''}`;
@@ -72,6 +89,10 @@ export async function handleCookiesCommand(argsIn: string[], bm: BrowserManager)
       return importCommand(args, bm);
 
     case 'clear': {
+      if (takeBool(args, '--imported')) {
+        const n = await bm.forgetImported();
+        return n ? `Removed ${n} copied cookie(s)` : 'No copied cookies to remove';
+      }
       const domains = takeFlag(args, '--domain').map(normalizeDomain);
       const ctx = bm.getContext();
       if (domains.length === 0) {
@@ -87,6 +108,7 @@ export async function handleCookiesCommand(argsIn: string[], bm: BrowserManager)
     }
 
     case 'picker':
+      requireUnsafe(args, 'cookies picker');
       return openPicker(bm);
 
     default:
@@ -95,6 +117,8 @@ export async function handleCookiesCommand(argsIn: string[], bm: BrowserManager)
 }
 
 async function importCommand(args: string[], bm: BrowserManager): Promise<string> {
+  requireUnsafe(args, 'cookies import');
+  const persist = takeBool(args, '--persist');
   const domains = takeFlag(args, '--domain').map(normalizeDomain);
   const profile = takeFlag(args, '--profile')[0];
   const verify = takeFlag(args, '--verify-auth')[0];
@@ -147,7 +171,7 @@ async function importCommand(args: string[], bm: BrowserManager): Promise<string
   if (withCookies.length > 1) {
     throw usage(
       `Several profiles have cookies for ${domains.join(', ')}; choose one.`,
-      withCookies.map(c => `cookies import ${c.src.browser} --profile "${c.src.profile}" --domain ${domains[0]}   # ${c.total} cookies${c.src.profileLabel !== c.src.profile ? `, ${c.src.profileLabel}` : ''}`).join('\n'),
+      withCookies.map(c => `cookies import ${c.src.browser} --profile "${c.src.profile}" --domain ${domains[0]} ${UNSAFE_FLAG}   # ${c.total} cookies${c.src.profileLabel !== c.src.profile ? `, ${c.src.profileLabel}` : ''}`).join('\n'),
     );
   }
 
@@ -155,16 +179,20 @@ async function importCommand(args: string[], bm: BrowserManager): Promise<string
   const result = await importFromSource(src, domains);
   const failures = { ...result.failures };
   const applied = await addCookies(bm, result.cookies, failures);
+  const temporary = !persist && !!bm.cfg.profileDir;
+  if (temporary) await bm.trackImported(result.cookies);
 
-  const lines: string[] = [];
+  const lines: string[] = [`UNSAFE: copied the user's real session cookies for ${domains.join(', ')}. Do not print, log or share them.`];
   const hosts = Object.entries(result.domainCounts).map(([h, n]) => `${h}=${n}`).join(', ');
   lines.push(`Imported ${applied} cookie(s) for ${domains.join(', ')} from ${describe(src)}${hosts ? ` [${hosts}]` : ''}`);
   if (Object.keys(failures).length) {
     lines.push(`Failures: ${Object.entries(failures).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   }
-  lines.push(bm.cfg.profileDir
-    ? `Saved in profile ${bm.cfg.profileDir}`
-    : 'Ephemeral session: these cookies are lost when the browser stops.');
+  lines.push(!bm.cfg.profileDir
+    ? 'Ephemeral browser: the copies exist only in memory and are gone when it stops.'
+    : temporary
+      ? "Temporary: removed when the browser stops ('browse stop'), or at the next start after a crash. 'cookies clear --imported' removes them now."
+      : `PERSISTED in ${bm.cfg.profileDir} until they expire. Remove with 'cookies clear --domain ${domains[0]}' or 'browse purge --yes'.`);
 
   if (applied === 0) {
     throw new BrowseError(lines.join('\n'), 'failed',

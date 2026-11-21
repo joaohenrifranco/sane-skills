@@ -110,7 +110,10 @@ export async function handleCookiePickerRoute(url: URL, req: Request, bm: Browse
       }
       const domains = body!.domains.map(normalizeDomain);
       const result = await importFromSource(src, domains);
-      if (result.cookies.length > 0) await bm.getContext().addCookies(result.cookies);
+      if (result.cookies.length > 0) {
+        await bm.getContext().addCookies(result.cookies);
+        if (bm.cfg.profileDir) await bm.trackImported(result.cookies);
+      }
       for (const [d, n] of Object.entries(result.domainCounts)) importedCounts.set(d, (importedCounts.get(d) || 0) + n);
       const failed = Object.values(result.failures).reduce((a, b) => a + b, 0);
       return json({

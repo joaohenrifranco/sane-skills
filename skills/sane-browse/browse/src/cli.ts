@@ -305,7 +305,7 @@ async function doctor(config: BrowseConfig, launch: LaunchConfig, fix: boolean):
   try {
     const { listSources, blockedSources, BLOCKED_HINT } = await import('./cookie-import-browser');
     const sources = listSources();
-    lines.push(`cookies    ${sources.length ? sources.map(s => `${s.browser}:"${s.profile}"`).join(', ') : 'no importable browser profiles found'}`);
+    lines.push(`cookies    ${sources.length ? sources.map(s => `${s.browser}:"${s.profile}"`).join(', ') : 'no importable browser profiles found'}${sources.length ? '  (copying needs --unsafe-copy-browser-cookies; prefer handoff)' : ''}`);
     for (const b of blockedSources()) lines.push(`           blocked: ${b}. ${BLOCKED_HINT}`);
   } catch (err: any) {
     lines.push(`cookies    could not scan (${err?.message})`);
@@ -332,15 +332,28 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'doctor') return doctor(config, launch, args.includes('--fix'));
+  if (command === 'purge') return purge(config, launch, args, opts);
   if (LOCAL_COMMANDS.has(command)) return;
 
   if (command === 'stop') {
+    const stopped = await stopServer(config);
+    const msg = stopped ? 'Server stopped' : 'No browser running';
+    if (opts.json) console.log(JSON.stringify({ ok: true, command, output: msg }));
+    else console.log(msg);
+    return;
+  }
+
+  if (command === 'chain' && args.length === 0) args.push((await Bun.stdin.text()).trim());
+
+  const state = await ensureServer(config, launch, opts.explicit);
+  await sendCommand(state, command, args, opts);
+}
+
+/** Stop the project's server if one runs. Returns whether one was running. */
+async function stopServer(config: BrowseConfig): Promise<boolean> {
+  {
     const state = readState(config);
-    if (!state || !isAlive(state.pid)) {
-      if (opts.json) console.log(JSON.stringify({ ok: true, command, output: 'No browser running' }));
-      else console.log('No browser running');
-      return;
-    }
+    if (!state || !isAlive(state.pid)) return false;
     // Short request; a hung server is terminated by signal instead.
     await fetch(`http://127.0.0.1:${state.port}/command`, {
       method: 'POST',
@@ -351,15 +364,41 @@ async function main(): Promise<void> {
     const deadline = Date.now() + 7000;
     while (Date.now() < deadline && isAlive(state.pid)) await Bun.sleep(100);
     if (isAlive(state.pid)) await killServer(state.pid);
-    if (opts.json) console.log(JSON.stringify({ ok: true, command, output: 'Server stopped' }));
-    else console.log('Server stopped');
-    return;
+    return true;
   }
+}
 
-  if (command === 'chain' && args.length === 0) args.push((await Bun.stdin.text()).trim());
-
-  const state = await ensureServer(config, launch, opts.explicit);
-  await sendCommand(state, command, args, opts);
+/**
+ * Delete what browse stored for this project (profile with its cookies,
+ * logs, saved states), or everything under the browse home with --all.
+ * Requires --yes. Never deletes a custom --profile path outside the home.
+ */
+async function purge(config: BrowseConfig, launch: LaunchConfig, args: string[], opts: GlobalOptions): Promise<void> {
+  const all = args.includes('--all');
+  const targets = all
+    ? [config.home]
+    : [config.stateDir, ...(launch.profileDir ? [launch.profileDir] : [])];
+  const inside = (p: string) => path.resolve(p).startsWith(path.resolve(config.home) + path.sep);
+  const safe = all ? targets : targets.filter(inside);
+  const skipped = targets.filter(t => !safe.includes(t));
+  if (!args.includes('--yes')) {
+    fail('usage', `purge deletes ${safe.join(' and ')} (browser profile, cookies, logs, saved states).`, 'Run again with --yes to confirm.');
+  }
+  if (all) {
+    // Stop every project's server first.
+    const projects = path.join(config.home, 'projects');
+    for (const slug of fs.existsSync(projects) ? fs.readdirSync(projects) : []) {
+      const stateFile = path.join(projects, slug, 'browse.json');
+      await stopServer({ ...config, stateFile });
+    }
+  } else {
+    await stopServer(config);
+  }
+  for (const t of safe) fs.rmSync(t, { recursive: true, force: true });
+  const lines = [`Deleted: ${safe.join(', ')}`];
+  if (skipped.length) lines.push(`Kept (outside ${config.home}; delete it yourself if intended): ${skipped.join(', ')}`);
+  if (opts.json) console.log(JSON.stringify({ ok: true, command: 'purge', output: lines.join('\n') }));
+  else console.log(lines.join('\n'));
 }
 
 if (import.meta.main) {

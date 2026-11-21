@@ -82,6 +82,7 @@ const idleCheckInterval = setInterval(() => {
 
 // ─── Server ────────────────────────────────────────────────────
 const browserManager = new BrowserManager(launch);
+browserManager.importManifest = path.join(config.stateDir, 'copied-cookies.json');
 let isShuttingDown = false;
 
 async function findPort(): Promise<number> {

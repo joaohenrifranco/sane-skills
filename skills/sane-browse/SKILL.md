@@ -4,9 +4,8 @@ version: 3.0.0
 description: |
   Browser evidence collection for live pages: navigate, inspect, interact,
   capture screenshots, and verify observable outcomes, headless or headed.
-  Hands off to the user for CAPTCHAs, MFA and logins, keeps sessions in a
-  per-project profile, and can copy cookies from Chrome, Brave, Edge, Arc or
-  Firefox. Use when a task needs browser evidence. For systematic QA
+  Hands off to the user for CAPTCHAs, MFA and logins, and keeps sessions in
+  a per-project profile. Use when a task needs browser evidence. For systematic QA
   coverage, use /sane-qa instead.
 ---
 
@@ -50,7 +49,8 @@ outcome that was not observed.
 | Default evidence collection, CI | headless (no flag) |
 | The user wants to watch, or headless behaves differently | `$B --headed goto <url>` |
 | CAPTCHA, MFA, OAuth consent, a login the agent must not type | `$B handoff "<what to do>" --until <condition>` |
-| The user is already signed in to the site in their own browser | `$B cookies import <browser> --domain <site>` (ask first) |
+| The task needs a signed-in session | `handoff` so the user signs in once; the profile keeps it |
+| The user explicitly asks to reuse their own browser's login | last resort: `cookies import ... --unsafe-copy-browser-cookies` (see below) |
 | A clean, reproducible run with no saved state | `$B --ephemeral ...` |
 | Parallel agents on one project | `--session <name>` per agent |
 
@@ -186,35 +186,53 @@ a password or code with you instead.
 ## Sessions and cookies
 
 The default profile keeps cookies, including session cookies, across
-restarts. Use it to sign in once (by handoff) and reuse the session.
+restarts, in `~/.cache/sane-browse/profiles/<project>` (never the repo). To
+get a signed-in session, hand off and let the user sign in once:
 
 ```bash
-$B cookies sources                       # browsers and profiles found
-$B cookies import chrome --domain example.com --verify-auth "[data-user-menu]"
-$B cookies import firefox --domain example.com --profile default-release
+$B handoff "Sign in to example.com" --until url:/dashboard
 $B cookies --domain example.com          # list; values redacted
 $B cookies clear --domain example.com
 $B state save before-test                # cookies + localStorage, 0600
 $B state load before-test
+$B purge --yes                           # delete this project's profile, cookies, logs, states
 ```
 
-Importing reads the user's real sessions: do it only when the user asked
-for it or agreed, and only for the domains the task needs. `--domain`
-covers the domain, its dotted form and its subdomains. When several profiles
-have cookies, the command exits 2 and lists the exact command for each.
-Exit 3 means a dialog or permission needs the user: the macOS Keychain
-prompt (click Allow), or macOS privacy protection on the browser's data
-folder (grant the terminal Full Disk Access). Importing cookies does not
-prove sign-in; `--verify-auth <selector>[=<text>]` reloads the site and
-checks an element only a signed-in user sees. Some sites (Google, for
-example) reject sessions copied from another browser; when verification
-fails, sign in once by handoff instead; the profile keeps it. Cookie values are never
-printed unless `cookies --values` is used; do not paste them into reports.
+### Copying the user's browser cookies (unsafe, last resort)
+
+Copying cookies out of the user's Chrome, Brave, Edge, Arc or Firefox hands
+the agent their real, signed-in sessions. It is off by default. Use it only
+when the user explicitly asks for it, never as a way around a login wall,
+and only for the domains the task needs:
+
+```bash
+$B cookies sources
+$B cookies import chrome --domain example.com --unsafe-copy-browser-cookies --verify-auth "[data-user-menu]"
+$B cookies clear --imported              # remove the copies now
+```
+
+- Without `--unsafe-copy-browser-cookies` the command exits 2 and suggests
+  handoff. The same flag is required for `cookies picker`.
+- Copies are temporary: they are removed when the browser stops, or at the
+  next start after a crash. `--persist` keeps them in the project profile
+  until they expire; remove them with `cookies clear` or `purge`. In an
+  `--ephemeral` browser they only ever exist in memory.
+- `--domain` covers the domain, its dotted form and its subdomains. When
+  several profiles have cookies the command exits 2 and lists the exact
+  command for each; let the user choose.
+- Exit 3 means the user must act: allow the macOS Keychain prompt, or give
+  the terminal Full Disk Access when macOS privacy protection blocks the
+  browser's data folder.
+- Copying does not prove sign-in. `--verify-auth <selector>[=<text>]`
+  reloads the site and checks an element only a signed-in user sees. Some
+  sites (Google, for example) reject sessions copied from another browser;
+  then use handoff.
+- Never print, log or report cookie values (`cookies --values` exists for
+  debugging only).
 
 Supported: Chrome, Chromium, Brave, Edge, Arc and Comet on macOS; Firefox
-on macOS, Linux and Windows. Chromium cookies on Linux and Windows App-Bound
-Encryption are not readable: sign in by handoff instead.
-`$B cookies picker` opens an interactive picker in the user's own browser.
+on macOS, Linux and Windows. Chromium cookies on Linux and Windows
+App-Bound Encryption are not readable.
 
 ## Snapshot flags
 
@@ -252,7 +270,7 @@ Run `$B help` for the full list with usage. In short:
 - Tabs: `newtab [url]`, `tabs`, `tab <id>`, `closetab [id]`.
 - Multi-step: `chain` reads `[["cmd","arg"],...]` from stdin and stops at
   the first failing step with that step's exit code.
-- Server: `status`, `stop`, `restart`, `doctor`.
+- Server: `status`, `stop`, `restart`, `doctor`, `purge --yes [--all]`.
 
 Global options: `--headed`, `--profile <name|path>`, `--ephemeral`,
 `--proxy <url>` (also from `BROWSE_PROXY_URL` or `HTTPS_PROXY`; `direct`

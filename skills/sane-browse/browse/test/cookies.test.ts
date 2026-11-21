@@ -18,6 +18,7 @@ import { textSeparator } from '../src/cookie-commands';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sane-cookies-')));
 const future = Math.floor(Date.now() / 1000) + 3600;
+const U = '--unsafe-copy-browser-cookies';
 
 function makeFirefoxRoot(): string {
   const root = tmp();
@@ -42,11 +43,13 @@ function makeFirefoxRoot(): string {
 describe('firefox import through the CLI', () => {
   let site: { url: string; stop: () => void };
   let sb: Sandbox;
+  let ffRoot: string;
   beforeAll(() => {
     site = startFixtureServer();
-    sb = makeSandbox({ BROWSE_FIREFOX_ROOT: makeFirefoxRoot() });
+    ffRoot = makeFirefoxRoot();
+    sb = makeSandbox({ BROWSE_FIREFOX_ROOT: ffRoot });
   });
-  afterAll(async () => { await sb.stop(); site.stop(); });
+  afterAll(async () => { await sb.stop(); site.stop(); fs.rmSync(ffRoot, { recursive: true, force: true }); });
 
   test('sources lists the default profile', async () => {
     const r = await sb.run(['cookies', 'sources', 'firefox']);
@@ -55,7 +58,7 @@ describe('firefox import through the CLI', () => {
 
   test('imports only default-container, unexpired cookies for the domain', async () => {
     await sb.run(['goto', `${site.url}/`]);
-    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost']);
+    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U]);
     expect(r.code).toBe(0);
     expect(r.out).toContain('Imported 2 cookie(s)');
     expect(r.out).toContain('Auth: not checked');
@@ -69,25 +72,76 @@ describe('firefox import through the CLI', () => {
   });
 
   test('a domain with no cookies fails with a hint (exit 1)', async () => {
-    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'nothing.example']);
+    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'nothing.example', U]);
     expect(r.code).toBe(1);
     expect(r.err).toContain('No cookies for nothing.example');
     expect(r.err).toContain('handoff');
   });
 
   test('--domain is required; unknown browsers are usage errors', async () => {
-    expect((await sb.run(['cookies', 'import', 'firefox'])).code).toBe(2);
-    expect((await sb.run(['cookies', 'import', 'netscape', '--domain', 'x.com'])).code).toBe(2);
+    expect((await sb.run(['cookies', 'import', 'firefox', U])).code).toBe(2);
+    expect((await sb.run(['cookies', 'import', 'netscape', '--domain', 'x.com', U])).code).toBe(2);
   });
 
   test('--verify-auth checks a visible element after import', async () => {
     await sb.run(['goto', `${site.url}/secret.html`]);
-    const ok = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', '--verify-auth', 'h1=Welcome human']);
+    const ok = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U, '--verify-auth', 'h1=Welcome human']);
     expect(ok.code).toBe(0);
     expect(ok.out).toContain('Auth: verified');
-    const bad = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', '--verify-auth', 'h1=Someone else']);
+    const bad = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U, '--verify-auth', 'h1=Someone else']);
     expect(bad.code).toBe(1);
     expect(bad.err).toContain('Auth: NOT verified');
+  });
+
+  test('copying is refused without the unsafe flag, pointing to handoff', async () => {
+    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost']);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('handoff');
+    expect(r.err).toContain(U);
+    expect((await sb.run(['cookies', 'picker'])).code).toBe(2);
+    expect((await sb.run(['cookie-import-browser', 'firefox', '--domain', 'localhost'])).code).toBe(2);
+  });
+
+  test('copied cookies are temporary: gone after stop', async () => {
+    await sb.run(['goto', `${site.url}/`]);
+    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U]);
+    expect(r.out).toContain('UNSAFE');
+    expect(r.out).toContain('Temporary');
+    await sb.run(['stop']);
+    await sb.run(['goto', `${site.url}/echo-cookies`]);
+    expect((await sb.run(['text'])).out).not.toContain('ff_seconds');
+  });
+
+  test('copied cookies are removed at the next start after a crash', async () => {
+    await sb.run(['goto', `${site.url}/`]);
+    await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U]);
+    const statesRoot = path.join(sb.home, 'projects');
+    const dir = path.join(statesRoot, fs.readdirSync(statesRoot)[0]);
+    expect(fs.existsSync(path.join(dir, 'copied-cookies.json'))).toBe(true);
+    const manifest = fs.readFileSync(path.join(dir, 'copied-cookies.json'), 'utf-8');
+    expect(manifest).not.toContain('"value"');
+    const state = JSON.parse(fs.readFileSync(path.join(dir, 'browse.json'), 'utf-8'));
+    process.kill(state.pid, 'SIGKILL');
+    await Bun.sleep(500);
+    await sb.run(['goto', `${site.url}/echo-cookies`]);
+    expect((await sb.run(['text'])).out).not.toContain('ff_seconds');
+    expect(fs.existsSync(path.join(dir, 'copied-cookies.json'))).toBe(false);
+  });
+
+  test('--persist keeps copied cookies; clear --imported and purge remove state', async () => {
+    await sb.run(['goto', `${site.url}/`]);
+    const r = await sb.run(['cookies', 'import', 'firefox', '--domain', 'localhost', U, '--persist']);
+    expect(r.out).toContain('PERSISTED');
+    await sb.run(['stop']);
+    await sb.run(['goto', `${site.url}/echo-cookies`]);
+    expect((await sb.run(['text'])).out).toContain('ff_seconds=a');
+    expect((await sb.run(['purge'])).code).toBe(2);
+    const p = await sb.run(['purge', '--yes']);
+    expect(p.code).toBe(0);
+    expect(fs.existsSync(path.join(sb.home, 'profiles'))).toBe(true);
+    expect(fs.readdirSync(path.join(sb.home, 'profiles'))).toEqual([]);
+    await sb.run(['goto', `${site.url}/echo-cookies`]);
+    expect((await sb.run(['text'])).out).toContain('(none)');
   });
 
   test('the picker refuses requests without its one-use token', async () => {

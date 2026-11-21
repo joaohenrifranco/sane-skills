@@ -85,7 +85,7 @@ fi
 # 6b. Every `$B <command>` documented in a skill exists in the browse registry
 REGISTRY=skills/sane-browse/browse/src/commands.ts
 if [ -f "$REGISTRY" ]; then
-  KNOWN=$( (grep -oE "^  '[a-z-]+':" "$REGISTRY" | tr -d "': "; echo doctor; echo help) | sort -u)
+  KNOWN=$( (grep -oE "^  '[a-z-]+':" "$REGISTRY" | tr -d "': "; echo doctor; echo help; echo purge) | sort -u)
   UNKNOWN=""
   for f in "${SKILLS[@]}"; do
     # First non-option word after $B; value-taking global options consume one word.

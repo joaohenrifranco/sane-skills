@@ -290,7 +290,7 @@ export async function handleMetaCommand(
 
     case 'cookie-import-browser': {
       if (args.includes('--domain')) return handleCookiesCommand(['import', ...args], bm);
-      return handleCookiesCommand(['picker'], bm);
+      return handleCookiesCommand(['picker', ...args.filter(a => a.startsWith('--unsafe'))], bm);
     }
 
     case 'state': {

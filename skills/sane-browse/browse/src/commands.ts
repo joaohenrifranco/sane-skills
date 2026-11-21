@@ -29,7 +29,7 @@ export const META_COMMANDS = new Set([
 ]);
 
 /** Commands the CLI answers itself, without a running browser. */
-export const LOCAL_COMMANDS = new Set(['help', 'doctor']);
+export const LOCAL_COMMANDS = new Set(['help', 'doctor', 'purge']);
 
 export const ALL_COMMANDS = new Set([...READ_COMMANDS, ...WRITE_COMMANDS, ...META_COMMANDS]);
 
@@ -75,11 +75,11 @@ export const COMMAND_DESCRIPTIONS: Record<string, { category: string; descriptio
   'tap':     { category: 'Mobile', description: 'Tap an element or point (needs device)', usage: 'tap <sel|@ref|x y>' },
   'swipe':   { category: 'Mobile', description: 'One-finger swipe (needs device)', usage: 'swipe <sel|@ref|x y> <up|down|left|right> [--distance px] [--ms n]' },
   // Session
-  'cookies': { category: 'Session', description: 'List, import from Chrome/Brave/Edge/Arc/Firefox, clear, or pick cookies', usage: 'cookies [--domain d] [--values] | sources | import [browser] --domain d [--profile P] [--verify-auth <sel>[=<text>]] | clear [--domain d] | picker' },
+  'cookies': { category: 'Session', description: 'List or clear cookies. Copying the user\'s real cookies (import/picker) is UNSAFE, needs --unsafe-copy-browser-cookies, and is temporary unless --persist; prefer handoff', usage: 'cookies [--domain d] [--values] | sources | clear [--domain d|--imported] | import [browser] --domain d --unsafe-copy-browser-cookies [--profile P] [--persist] [--verify-auth <sel>[=<text>]] | picker --unsafe-copy-browser-cookies' },
   'state':   { category: 'Session', description: 'Save or load cookies + localStorage', usage: 'state save|load <name|file.json> | list | rm <name>' },
   'cookie':  { category: 'Session', description: 'Set a cookie on the current domain', usage: 'cookie <name>=<value>' },
   'cookie-import': { category: 'Session', description: 'Load cookies from a JSON array file', usage: 'cookie-import <file.json>' },
-  'cookie-import-browser': { category: 'Session', description: 'Alias of "cookies import" (with --domain) or "cookies picker"', usage: 'cookie-import-browser [browser] [--domain d] [--profile P]' },
+  'cookie-import-browser': { category: 'Session', description: 'Alias of "cookies import" (with --domain) or "cookies picker"; same --unsafe-copy-browser-cookies requirement', usage: 'cookie-import-browser [browser] [--domain d] [--profile P] --unsafe-copy-browser-cookies' },
   'header':  { category: 'Session', description: 'Set an extra request header (sensitive values redacted)', usage: 'header <name>:<value>' },
   'useragent': { category: 'Session', description: 'Override the user agent (reopens tabs)', usage: 'useragent <string>' },
   // Visual
@@ -135,7 +135,10 @@ export function generateHelpText(snapshotFlags: Array<{ short: string; long: str
   }
   const lines = ['browse — headless/headed browser for AI agents', '', 'Usage: browse [global options] <command> [args]', '', 'Global options:'];
   for (const [flag, desc] of GLOBAL_OPTIONS) lines.push(`  ${flag.padEnd(24)}${desc}`);
-  lines.push('', 'Local commands:', '  doctor [--fix]\n      Check bun, Playwright, Chromium, profile and cookie sources', '  help\n      This text');
+  lines.push('', 'Local commands:',
+    '  doctor [--fix]\n      Check bun, Playwright, Chromium, profile and cookie sources',
+    '  purge --yes [--all]\n      Stop the browser and delete this project\'s profile, cookies, logs and saved states (--all: everything)',
+    '  help\n      This text');
   for (const cat of CATEGORY_ORDER) {
     const cmds = groups.get(cat);
     if (!cmds) continue;

@@ -14,7 +14,7 @@ with `gh skill install`.
 | `sane-plan` | 4.0.0 | Smallest-defensible-design planning with explicit boundaries and tradeoffs | `sane-code` (rules) |
 | `sane-debug` | 3.0.0 | Evidence-led root-cause investigation, minimal fix, and verification | — |
 | `sane-qa` | 2.0.0 | Risk-scoped browser QA with reproducible evidence and safe fix handoff | `sane-browse`, `sane-debug` |
-| `sane-browse` | 3.0.0 | Headless/headed browser evidence, user handoff, persistent sessions, cookie import | — |
+| `sane-browse` | 3.0.0 | Headless/headed browser evidence, user handoff, persistent per-project sessions | — |
 | `sane-benchmark` | 5.0.0 | Context-preserving runtime measurement, diagnosis, and comparison | `sane-browse`, `sane-debug` |
 
 Bundle-style install is recommended: `sane-qa`, `sane-benchmark`, and
@@ -58,8 +58,10 @@ missing. State, logs and the per-project browser profile live in
 `~/.cache/sane-browse` (`BROWSE_HOME` overrides), never in your repository.
 
 Platforms: macOS and Linux (headed mode on a display-less Linux host uses
-Xvfb when installed). Cookie import reads Chrome, Chromium, Brave, Edge, Arc
-and Comet on macOS, and Firefox everywhere. Windows is untested.
+Xvfb when installed). Copying cookies from the user's own browser (Chrome,
+Chromium, Brave, Edge, Arc, Comet on macOS; Firefox everywhere) is opt-in via
+`--unsafe-copy-browser-cookies` and temporary by default. `browse purge --yes`
+deletes a project's stored profile and state. Windows is untested.
 
 Tests: `cd skills/sane-browse/browse && bun install && bun test`
 (`BROWSE_TEST_HEADED=0` skips the tests that open a visible browser).
